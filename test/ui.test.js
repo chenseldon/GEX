@@ -10,12 +10,34 @@ test("V2 shell exposes GammaFlip-style advanced studio controls", () => {
     'id="ctxTrigger"',
     'id="ctxModal"',
     'id="reachPanel"',
+    'id="productSwitchButton"',
+    'id="productMenu"',
+    'id="reachHorizonTabs"',
+    'id="reachImpactTabs"',
+    'id="reachDirectionTabs"',
+    'id="reachComputeButton"',
     'id="chartControlsPanel"',
     'id="tmControlsBar"',
     'id="termViewToggle"',
     'id="settingsDialog"',
     'id="menuPanel"',
     'id="helpDrawer"',
+  ].forEach((needle) => {
+    assert.match(html, new RegExp(escapeRegExp(needle)));
+  });
+});
+
+test("V2 shell mirrors observed GammaFlip picker and reach vocabulary", () => {
+  [
+    "GEX Studio",
+    "Dashboard",
+    "Settles 08:00 UTC",
+    "Hold <kbd>Alt</kbd> to see the chart",
+    "Monte Carlo",
+    "Horizon — how far ahead",
+    "GEX impact — how strongly gamma pins or amplifies moves",
+    "Direction — which side to measure",
+    "▶ Compute",
   ].forEach((needle) => {
     assert.match(html, new RegExp(escapeRegExp(needle)));
   });

@@ -22,6 +22,8 @@ const state = {
 
 const els = {
   productLabel: document.querySelector("#productLabel"),
+  productSwitchButton: document.querySelector("#productSwitchButton"),
+  productMenu: document.querySelector("#productMenu"),
   ctxTrigger: document.querySelector("#ctxTrigger"),
   ctxPillSymbol: document.querySelector("#ctxPillSymbol"),
   ctxPillMeta: document.querySelector("#ctxPillMeta"),
@@ -52,6 +54,8 @@ const els = {
   reachButton: document.querySelector("#reachButton"),
   reachPanel: document.querySelector("#reachPanel"),
   reachRows: document.querySelector("#reachRows"),
+  reachComputeButton: document.querySelector("#reachComputeButton"),
+  reachStatus: document.querySelector("#reachStatus"),
   chartControlsButton: document.querySelector("#chartControlsButton"),
   chartControlsPanel: document.querySelector("#chartControlsPanel"),
   tmPrevButton: document.querySelector("#tmPrevButton"),
@@ -120,6 +124,7 @@ function bindEvents() {
 
   els.refreshButton.addEventListener("click", loadData);
   els.ctxTrigger.addEventListener("click", () => openModal(els.ctxModal));
+  els.productSwitchButton.addEventListener("click", () => toggleHidden(els.productMenu));
   els.dashboardCsvButton.addEventListener("click", () => exportCsv(state.dashboard?.rows ?? []));
   els.studioCsvButton.addEventListener("click", () => exportCsv(state.studio?.rows ?? []));
   els.settingsButton.addEventListener("click", () => openModal(els.settingsDialog));
@@ -194,8 +199,14 @@ function bindEvents() {
     renderTermMode();
   });
   els.reachButton.addEventListener("click", () => {
-    renderReachPanel();
+    els.reachRows.hidden = true;
+    els.reachStatus.textContent = "Press Compute";
     toggleHidden(els.reachPanel);
+  });
+  els.reachComputeButton.addEventListener("click", () => {
+    renderReachPanel();
+    els.reachRows.hidden = false;
+    els.reachStatus.textContent = "Computed from local fixture volatility";
   });
   els.chartControlsButton.addEventListener("click", () => toggleHidden(els.chartControlsPanel));
 
@@ -268,12 +279,12 @@ function renderSymbolTabs() {
 
 function renderContextPicker() {
   els.ctxPillSymbol.textContent = state.symbol;
-  els.ctxPillMeta.textContent = `${state.expiry || "All"} · ${state.dashboard?.expiries?.length ?? 0} expirations`;
+  els.ctxPillMeta.textContent = `${state.expiry ? formatExpiryCode(state.expiry) : "All"} · TOTAL`;
   els.ctxAssetList.replaceChildren(
     ...state.instruments.map((instrument) => {
       const button = document.createElement("button");
       button.type = "button";
-      button.textContent = `${instrument.symbol} · ${instrument.name}`;
+      button.innerHTML = `<span class="asset-logo">${assetIcon(instrument.symbol)}</span><strong>${instrument.symbol}</strong><small>${instrument.name}</small>`;
       button.className = instrument.symbol === state.symbol ? "active" : "";
       button.addEventListener("click", async () => {
         state.symbol = instrument.symbol;
@@ -285,8 +296,8 @@ function renderContextPicker() {
     }),
   );
   els.ctxExpiryList.replaceChildren(
-    contextExpiryButton("", "All expiries"),
-    ...state.dashboard.expiries.map((row) => contextExpiryButton(row.expiry, row.expiry)),
+    contextExpiryButton("", { label: "TOTAL", gex: state.dashboard.expiries.reduce((sum, row) => sum + Math.abs(row.gex), 0) }),
+    ...state.dashboard.expiries.map((row) => contextExpiryButton(row.expiry, row)),
   );
 }
 
@@ -642,8 +653,8 @@ function renderDualStrikeChart(svg, { rows, keyLevels, spotPrice, zoomPct = 100,
 
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.replaceChildren();
-  rect(svg, pad.left, pad.top, width - pad.left - pad.right, topBottom - pad.top, "#111822", 8, "chart-surface");
-  rect(svg, pad.left, bottomTop, width - pad.left - pad.right, height - pad.bottom - bottomTop, "#111822", 8, "chart-surface");
+  rect(svg, pad.left, pad.top, width - pad.left - pad.right, topBottom - pad.top, "#ffffff", 8, "chart-surface");
+  rect(svg, pad.left, bottomTop, width - pad.left - pad.right, height - pad.bottom - bottomTop, "#ffffff", 8, "chart-surface");
   addGrid(svg, width, topBottom + 8, pad, maxNet);
   line(svg, pad.left, zeroY, width - pad.right, zeroY, "#d8dee8", "3 5", "zero-line");
 
@@ -671,8 +682,8 @@ function renderDualStrikeChart(svg, { rows, keyLevels, spotPrice, zoomPct = 100,
     line(svg, pos, pad.top, pos, height - pad.bottom, level.color, "3 4", "marker-line");
     markerLabel(svg, pos, level.id.includes("negative") ? zeroY + 22 : pad.top + 16, shortLevel(level.id), level.color);
   });
-  line(svg, x(spotPrice), pad.top, x(spotPrice), height - pad.bottom, "#e7eef6", "4 4", "spot-line");
-  markerLabel(svg, x(spotPrice), topBottom + 16, price(spotPrice), "#e7eef6", true);
+  line(svg, x(spotPrice), pad.top, x(spotPrice), height - pad.bottom, "#111827", "4 4", "spot-line");
+  markerLabel(svg, x(spotPrice), topBottom + 16, price(spotPrice), "#111827", true);
 
   label(svg, 20, 160, "Net GEX", "axis-title");
   label(svg, 20, 420, "Abs. GEX", "axis-title");
@@ -715,11 +726,15 @@ function renderLineChart(svg, series, color, width, height) {
 
 function setPage(page) {
   state.page = page;
+  els.productMenu.hidden = true;
   document.querySelectorAll(".page").forEach((section) => {
     section.classList.toggle("active-page", section.id === `${page}Page`);
   });
   document.querySelectorAll("[data-page]").forEach((button) => {
     button.classList.toggle("active", button.dataset.page === page);
+  });
+  els.productMenu.querySelectorAll("[data-page-jump]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.pageJump === page);
   });
   els.productLabel.textContent = page === "studio" ? "GEX Studio" : titleCase(page.replace("term", "term structure"));
 }
@@ -739,11 +754,38 @@ function toggleHidden(node) {
   node.hidden = !node.hidden;
 }
 
-function contextExpiryButton(value, text) {
+function assetIcon(symbol) {
+  return { BTC: "₿", ETH: "◆", SOL: "≋", XRP: "✕" }[symbol] ?? symbol.slice(0, 1);
+}
+
+function expiryBucket(expiry) {
+  const date = new Date(`${expiry}T00:00:00Z`);
+  const days = Math.max(0, Math.round((date - new Date(state.dashboard.asOf)) / 86400000));
+  if (days <= 6) return "D";
+  if (days <= 28) return "W";
+  if (days <= 70) return "M";
+  return "Q";
+}
+
+function formatExpiryCode(expiry) {
+  const date = new Date(`${expiry}T00:00:00Z`);
+  const day = String(date.getUTCDate());
+  const month = date.toLocaleString("en", { month: "short", timeZone: "UTC" }).toUpperCase();
+  const year = String(date.getUTCFullYear()).slice(-2);
+  return `${day}${month}${year}`;
+}
+
+function contextExpiryButton(value, row) {
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = text;
   button.className = value === state.expiry ? "active" : "";
+  const isTotal = !value;
+  const absGex = Math.abs(row.gex ?? 0);
+  const maxAbs = Math.max(...state.dashboard.expiries.map((expiry) => Math.abs(expiry.gex)), absGex, 1);
+  button.style.setProperty("--gex-share", `${Math.max(8, (absGex / maxAbs) * 100)}%`);
+  button.innerHTML = isTotal
+    ? `<strong>TOTAL</strong><span>|GEX| ${money(absGex)}</span>`
+    : `<span class="expiry-badge ${expiryBucket(value)}">${expiryBucket(value)}</span><strong>${formatExpiryCode(value)}</strong><span>|GEX| ${money(absGex)}</span>`;
   button.addEventListener("click", async () => {
     state.expiry = value;
     els.expirySelect.value = value;
@@ -850,8 +892,8 @@ function label(svg, x, y, text, className, fill = "") {
 
 function markerLabel(svg, x, y, text, color, inverse = false) {
   const width = Math.max(42, String(text).length * 8 + 14);
-  rect(svg, x - width / 2, y - 14, width, 24, inverse ? "#e7eef6" : color, 7, "marker-badge");
-  label(svg, x - width / 2 + 7, y + 2, text, "marker-text", inverse ? "#111822" : "#ffffff");
+  rect(svg, x - width / 2, y - 14, width, 24, inverse ? "#0f1117" : color, 7, "marker-badge");
+  label(svg, x - width / 2 + 7, y + 2, text, "marker-text", "#ffffff");
 }
 
 function svgNode(name, attrs = {}) {

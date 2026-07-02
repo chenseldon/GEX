@@ -9,3 +9,5 @@ dist/
 gammaflip.io *.txt
 gammaflip.io *.jpeg
 .playwright-cli/
+.chrome-gammaflip-debug/
+output/

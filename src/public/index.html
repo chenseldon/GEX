@@ -13,9 +13,24 @@
         <div class="brand">
           <div class="brand-mark">G</div>
           <div>
-            <strong>GEX Research</strong>
-            <span id="productLabel">Dashboard</span>
+            <strong>GammaFlip.io</strong>
           </div>
+        </div>
+
+        <div class="product-context">
+          <button id="productSwitchButton" class="product-switch" type="button" aria-haspopup="menu" aria-controls="productMenu">
+            <span class="product-icon">▥</span>
+            <span id="productLabel">Dashboard</span>
+            <span>⌄</span>
+          </button>
+          <span class="header-slash">/</span>
+          <button id="ctxTrigger" class="ctx-pill" type="button" aria-haspopup="dialog" aria-controls="ctxModal">
+            <span class="coin-dot">₿</span>
+            <span id="ctxPillSymbol">BTC</span>
+            <span>·</span>
+            <span id="ctxPillMeta">All · TOTAL</span>
+            <span>⌄</span>
+          </button>
         </div>
 
         <nav class="primary-nav" aria-label="Main navigation">
@@ -37,10 +52,6 @@
 
       <main class="workspace">
         <section class="context-bar" aria-label="Market context">
-          <button id="ctxTrigger" class="ctx-pill" type="button" aria-haspopup="dialog" aria-controls="ctxModal">
-            <span id="ctxPillSymbol">BTC</span>
-            <span id="ctxPillMeta">All · 2 expirations</span>
-          </button>
           <div class="segmented" id="marketClassTabs">
             <button class="active" type="button">Crypto</button>
             <button type="button" disabled>TradFi</button>
@@ -242,7 +253,15 @@
       <div id="ctxModal" class="modal-backdrop" hidden role="dialog" aria-label="Choose chart context">
         <div class="modal-card context-modal">
           <div class="modal-header">
-            <strong>Chart Context</strong>
+            <div class="ctx-title-row">
+              <strong>Context</strong>
+              <div class="segmented compact">
+                <button class="active" type="button">Crypto</button>
+                <button type="button" disabled>TradFi</button>
+              </div>
+              <span>Settles 08:00 UTC</span>
+            </div>
+            <span class="ctx-hint">Hold <kbd>Alt</kbd> to see the chart</span>
             <button data-close-modal="ctxModal" type="button">Close</button>
           </div>
           <div class="ctx-columns">
@@ -270,10 +289,39 @@
       <div id="reachPanel" class="popover-panel" hidden role="dialog" aria-label="Reach probability">
         <div class="modal-header">
           <strong>Reach probability</strong>
-          <button data-close-popover="reachPanel" type="button">Close</button>
+          <a href="#" aria-label="Learn more">Learn more</a>
         </div>
-        <p>Odds price reaches each GEX level by your horizon. Simulated locally from current fixture volatility.</p>
+        <p>Odds price reaches each GEX level by your horizon (Monte Carlo). Set the options, then press Compute.</p>
+        <div class="reach-controls">
+          <span>Horizon — how far ahead</span>
+          <div class="reach-chip-row" id="reachHorizonTabs">
+            <button type="button">8h</button>
+            <button type="button">1d</button>
+            <button class="active" type="button">3d</button>
+            <button type="button">7d</button>
+            <button type="button">14d</button>
+            <button type="button">30d</button>
+            <button type="button">Fri</button>
+            <button type="button">EOM</button>
+          </div>
+          <small>→ Sun 05 Jul 12:00 UTC · IV from 5JUL26</small>
+          <span>GEX impact — how strongly gamma pins or amplifies moves</span>
+          <div class="reach-chip-row" id="reachImpactTabs">
+            <button type="button">Light</button>
+            <button class="active" type="button">Normal</button>
+            <button type="button">Strong</button>
+          </div>
+          <span>Direction — which side to measure</span>
+          <div class="reach-chip-row" id="reachDirectionTabs">
+            <button class="active" type="button">auto ↑/↓</button>
+            <button type="button">≥</button>
+            <button type="button">≤</button>
+          </div>
+          <button id="reachComputeButton" class="compute-button" type="button">▶ Compute</button>
+          <small id="reachStatus">Press Compute</small>
+        </div>
         <div id="reachRows" class="reach-rows"></div>
+        <p class="reach-footnote">↑ odds price is at or above the level by your horizon<br />↓ odds price is at or below it<br />&lt;1% / &gt;99% — beyond the simulation's resolution.</p>
       </div>
 
       <div id="chartControlsPanel" class="popover-panel" hidden role="dialog" aria-label="Chart controls">
@@ -303,6 +351,18 @@
         <button id="helpButton" type="button">Help</button>
         <button id="tourButton" type="button">Guided Tour</button>
         <button id="feedbackButton" type="button">Send Feedback</button>
+      </div>
+
+      <div id="productMenu" class="product-menu" hidden role="menu" aria-label="Product menu">
+        <button class="active" data-page-jump="studio" type="button"><span>▥</span> GEX Studio</button>
+        <button data-page-jump="dashboard" type="button"><span>▥</span> Dashboard</button>
+        <hr />
+        <button type="button"><span>▥</span> Academy</button>
+        <button type="button"><span>▥</span> Blog</button>
+        <button type="button"><span>▥</span> Glossary</button>
+        <button type="button"><span>▥</span> Home</button>
+        <hr />
+        <button type="button"><span>▥</span> What's New</button>
       </div>
 
       <aside id="helpDrawer" class="help-drawer" hidden aria-label="Help drawer">
