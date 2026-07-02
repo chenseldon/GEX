@@ -32,6 +32,12 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === "/favicon.ico") {
+    res.writeHead(204, { "cache-control": "public, max-age=86400" });
+    res.end();
+    return;
+  }
+
   const relativePath = url.pathname === "/" ? "/index.html" : url.pathname;
   const filePath = normalize(join(publicDir, relativePath));
 

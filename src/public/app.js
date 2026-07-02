@@ -7,6 +7,8 @@ const state = {
   coverage: 50,
   zoom: 7,
   live: true,
+  termView: "chart",
+  timeIndex: 23,
   instruments: [],
   dashboard: null,
   studio: null,
@@ -20,6 +22,12 @@ const state = {
 
 const els = {
   productLabel: document.querySelector("#productLabel"),
+  ctxTrigger: document.querySelector("#ctxTrigger"),
+  ctxPillSymbol: document.querySelector("#ctxPillSymbol"),
+  ctxPillMeta: document.querySelector("#ctxPillMeta"),
+  ctxModal: document.querySelector("#ctxModal"),
+  ctxAssetList: document.querySelector("#ctxAssetList"),
+  ctxExpiryList: document.querySelector("#ctxExpiryList"),
   primaryNav: document.querySelector(".primary-nav"),
   symbolTabs: document.querySelector("#symbolTabs"),
   expirySelect: document.querySelector("#expirySelect"),
@@ -41,6 +49,15 @@ const els = {
   changeTable: document.querySelector("#changeTable"),
   categoryTabs: document.querySelector("#categoryTabs"),
   modeTabs: document.querySelector("#modeTabs"),
+  reachButton: document.querySelector("#reachButton"),
+  reachPanel: document.querySelector("#reachPanel"),
+  reachRows: document.querySelector("#reachRows"),
+  chartControlsButton: document.querySelector("#chartControlsButton"),
+  chartControlsPanel: document.querySelector("#chartControlsPanel"),
+  tmPrevButton: document.querySelector("#tmPrevButton"),
+  tmPlayButton: document.querySelector("#tmPlayButton"),
+  tmNextButton: document.querySelector("#tmNextButton"),
+  tmScrubber: document.querySelector("#tmScrubber"),
   studioCsvButton: document.querySelector("#studioCsvButton"),
   studioTitle: document.querySelector("#studioTitle"),
   studioSnapshotMeta: document.querySelector("#studioSnapshotMeta"),
@@ -51,11 +68,19 @@ const els = {
   zoomValue: document.querySelector("#zoomValue"),
   strikesChart: document.querySelector("#strikesChart"),
   termChart: document.querySelector("#termChart"),
+  termViewToggle: document.querySelector("#termViewToggle"),
+  termTable: document.querySelector("#termTable"),
   signalState: document.querySelector("#signalState"),
   riskCopy: document.querySelector("#riskCopy"),
   noteButton: document.querySelector("#noteButton"),
   notesList: document.querySelector("#notesList"),
   healthTable: document.querySelector("#healthTable"),
+  settingsButton: document.querySelector("#settingsButton"),
+  settingsDialog: document.querySelector("#settingsDialog"),
+  menuButton: document.querySelector("#menuButton"),
+  menuPanel: document.querySelector("#menuPanel"),
+  helpButton: document.querySelector("#helpButton"),
+  helpDrawer: document.querySelector("#helpDrawer"),
 };
 
 const formatters = {
@@ -88,13 +113,32 @@ function bindEvents() {
   els.expirySelect.addEventListener("change", async (event) => {
     state.expiry = event.target.value;
     await loadStudio();
+    renderContextPicker();
     renderStudio();
     renderFocusedCharts();
   });
 
   els.refreshButton.addEventListener("click", loadData);
+  els.ctxTrigger.addEventListener("click", () => openModal(els.ctxModal));
   els.dashboardCsvButton.addEventListener("click", () => exportCsv(state.dashboard?.rows ?? []));
   els.studioCsvButton.addEventListener("click", () => exportCsv(state.studio?.rows ?? []));
+  els.settingsButton.addEventListener("click", () => openModal(els.settingsDialog));
+  els.menuButton.addEventListener("click", () => toggleHidden(els.menuPanel));
+  els.helpButton.addEventListener("click", () => {
+    els.menuPanel.hidden = true;
+    openModal(els.helpDrawer);
+  });
+
+  document.querySelectorAll("[data-close-modal]").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.querySelector(`#${button.dataset.closeModal}`).hidden = true;
+    });
+  });
+  document.querySelectorAll("[data-close-popover]").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.querySelector(`#${button.dataset.closePopover}`).hidden = true;
+    });
+  });
 
   els.liveToggle.addEventListener("change", (event) => {
     state.live = event.target.checked;
@@ -102,6 +146,17 @@ function bindEvents() {
   });
 
   els.historyInput.addEventListener("input", () => {
+    state.timeIndex = Number(els.historyInput.value);
+    els.tmScrubber.value = String(state.timeIndex);
+    renderLiveState();
+  });
+  els.tmScrubber.addEventListener("input", () => setTimeIndex(Number(els.tmScrubber.value)));
+  els.tmPrevButton.addEventListener("click", () => setTimeIndex(Math.max(0, state.timeIndex - 1)));
+  els.tmNextButton.addEventListener("click", () => setTimeIndex(Math.min(23, state.timeIndex + 1)));
+  els.tmPlayButton.addEventListener("click", () => {
+    state.live = !state.live;
+    els.liveToggle.checked = state.live;
+    els.tmPlayButton.textContent = state.live ? "Pause" : "Play";
     renderLiveState();
   });
 
@@ -131,6 +186,18 @@ function bindEvents() {
     state.dashboard.changeTable = table;
     renderChangeTable(table);
   });
+  els.termViewToggle.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-term-view]");
+    if (!button) return;
+    state.termView = button.dataset.termView;
+    setActiveButton(els.termViewToggle, button);
+    renderTermMode();
+  });
+  els.reachButton.addEventListener("click", () => {
+    renderReachPanel();
+    toggleHidden(els.reachPanel);
+  });
+  els.chartControlsButton.addEventListener("click", () => toggleHidden(els.chartControlsPanel));
 
   els.zoomSlider.addEventListener("input", (event) => {
     state.zoom = Number(event.target.value);
@@ -167,6 +234,7 @@ async function loadStudio() {
 
 function renderAll() {
   renderSymbolTabs();
+  renderContextPicker();
   renderExpirySelect();
   renderTopContext();
   renderDashboard();
@@ -195,6 +263,30 @@ function renderSymbolTabs() {
       });
       return button;
     }),
+  );
+}
+
+function renderContextPicker() {
+  els.ctxPillSymbol.textContent = state.symbol;
+  els.ctxPillMeta.textContent = `${state.expiry || "All"} · ${state.dashboard?.expiries?.length ?? 0} expirations`;
+  els.ctxAssetList.replaceChildren(
+    ...state.instruments.map((instrument) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = `${instrument.symbol} · ${instrument.name}`;
+      button.className = instrument.symbol === state.symbol ? "active" : "";
+      button.addEventListener("click", async () => {
+        state.symbol = instrument.symbol;
+        state.expiry = "";
+        els.ctxModal.hidden = true;
+        await loadData();
+      });
+      return button;
+    }),
+  );
+  els.ctxExpiryList.replaceChildren(
+    contextExpiryButton("", "All expiries"),
+    ...state.dashboard.expiries.map((row) => contextExpiryButton(row.expiry, row.expiry)),
   );
 }
 
@@ -274,6 +366,8 @@ function renderFocusedCharts() {
     zoomPct: 100,
   });
   renderTermChart(els.termChart, state.dashboard.expiries);
+  renderTermTable();
+  renderTermMode();
 }
 
 function renderKeyLevels(levels) {
@@ -383,6 +477,29 @@ function renderSummaryRail() {
   );
 }
 
+function renderReachPanel() {
+  const spot = state.studio.spotPrice;
+  const rows = state.studio.markers.keyLevels.map((level) => {
+    const distance = Math.abs(level.strike - spot) / spot;
+    const probability = Math.max(4, Math.min(96, Math.round(82 - distance * 1800)));
+    return { ...level, probability };
+  });
+  els.reachRows.replaceChildren(
+    ...rows.map((row) => {
+      const node = document.createElement("div");
+      node.className = "reach-row";
+      node.innerHTML = `
+        <span class="level-dot" style="background:${row.color}"></span>
+        <strong>${row.label}</strong>
+        <span>${price(row.strike)}</span>
+        <meter min="0" max="100" value="${row.probability}"></meter>
+        <b>${row.probability}%</b>
+      `;
+      return node;
+    }),
+  );
+}
+
 function renderMarkerChips(levels) {
   els.markerChips.replaceChildren(
     ...levels.map((level) => {
@@ -419,6 +536,32 @@ function renderTermChart(svg, rows) {
     const usable = height - pad.top - pad.bottom;
     return pad.top + ((maxAbs - value) / (maxAbs * 2 || 1)) * usable;
   }
+}
+
+function renderTermTable() {
+  const body = state.dashboard.expiries
+    .map(
+      (row) => `
+        <tr>
+          <td>${row.expiry}</td>
+          <td>${money(row.gex)}</td>
+          <td>${formatters.integer.format(row.openInterest)}</td>
+          <td>${formatters.integer.format(row.volume)}</td>
+        </tr>
+      `,
+    )
+    .join("");
+  els.termTable.innerHTML = `
+    <table class="health-table">
+      <thead><tr><th>Expiry</th><th>Net GEX</th><th>Open Interest</th><th>Volume</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+  `;
+}
+
+function renderTermMode() {
+  els.termChart.hidden = state.termView !== "chart";
+  els.termTable.hidden = state.termView !== "table";
 }
 
 function renderSignal() {
@@ -474,6 +617,10 @@ function renderHealth() {
 
 function renderLiveState() {
   els.refreshButton.textContent = state.live ? "50s" : "Paused";
+  const point = state.dashboard?.trends?.points?.[state.timeIndex];
+  if (point) {
+    els.dataTimestamp.textContent = `${formatTimestamp(state.dashboard.asOf)} · ${point.time}`;
+  }
   document.body.classList.toggle("is-paused", !state.live);
 }
 
@@ -575,6 +722,38 @@ function setPage(page) {
     button.classList.toggle("active", button.dataset.page === page);
   });
   els.productLabel.textContent = page === "studio" ? "GEX Studio" : titleCase(page.replace("term", "term structure"));
+}
+
+function setTimeIndex(value) {
+  state.timeIndex = value;
+  els.historyInput.value = String(value);
+  els.tmScrubber.value = String(value);
+  renderLiveState();
+}
+
+function openModal(node) {
+  node.hidden = false;
+}
+
+function toggleHidden(node) {
+  node.hidden = !node.hidden;
+}
+
+function contextExpiryButton(value, text) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = text;
+  button.className = value === state.expiry ? "active" : "";
+  button.addEventListener("click", async () => {
+    state.expiry = value;
+    els.expirySelect.value = value;
+    els.ctxModal.hidden = true;
+    await loadStudio();
+    renderContextPicker();
+    renderStudio();
+    renderFocusedCharts();
+  });
+  return button;
 }
 
 function setActiveButton(container, activeButton) {

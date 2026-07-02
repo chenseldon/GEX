@@ -186,6 +186,20 @@ input[type="range"] {
   backdrop-filter: blur(12px);
 }
 
+.ctx-pill {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+  border-color: #33405a;
+  background: linear-gradient(180deg, rgb(117 126 232 / 22%), rgb(83 75 164 / 14%));
+  font-weight: 800;
+}
+
+.ctx-pill span:last-child {
+  color: var(--muted);
+  font-weight: 700;
+}
+
 .segmented,
 .symbol-tabs,
 .category-tabs,
@@ -290,7 +304,7 @@ p {
 .gauge {
   position: relative;
   width: min(210px, 100%);
-  height: 100px;
+  height: 88px;
   margin-top: 0.4rem;
   overflow: hidden;
 }
@@ -325,7 +339,7 @@ p {
 }
 
 .gauge-card strong {
-  margin-top: -0.4rem;
+  margin-top: 0.2rem;
   font-size: 1rem;
 }
 
@@ -542,6 +556,20 @@ svg {
   padding: 0.65rem;
 }
 
+.tm-controls {
+  display: grid;
+  grid-template-columns: auto auto auto 5.5rem 10rem minmax(8rem, 1fr) auto;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.65rem;
+}
+
+.tm-controls select,
+.tm-controls input[type="date"] {
+  min-width: 0;
+  width: 100%;
+}
+
 .summary-rail {
   display: grid;
   gap: 0.8rem;
@@ -685,6 +713,142 @@ svg {
   width: calc(100% - 1.8rem);
 }
 
+.term-table-wrap {
+  padding: 0 0.9rem 0.9rem;
+}
+
+.modal-backdrop {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(0 0 0 / 55%);
+  backdrop-filter: blur(8px);
+}
+
+.modal-card,
+.popover-panel,
+.menu-panel,
+.help-drawer {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  box-shadow: var(--shadow);
+}
+
+.modal-card {
+  width: min(860px, 100%);
+  max-height: 85vh;
+  overflow: auto;
+  padding: 0.9rem;
+}
+
+.modal-header {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.modal-header button {
+  padding: 0.42rem 0.65rem;
+}
+
+.ctx-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.ctx-list {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.ctx-list button {
+  text-align: left;
+}
+
+.ctx-list button.active {
+  border-color: #5269b8;
+  background: rgb(141 77 255 / 22%);
+}
+
+.popover-panel {
+  position: fixed;
+  z-index: 25;
+  top: 8.4rem;
+  right: 1rem;
+  width: min(360px, calc(100vw - 2rem));
+  padding: 0.85rem;
+}
+
+.reach-rows {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.75rem;
+}
+
+.reach-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.35rem 0.55rem;
+  align-items: center;
+}
+
+.reach-row meter {
+  grid-column: 2;
+  width: 100%;
+}
+
+.reach-row b {
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.menu-panel {
+  position: fixed;
+  z-index: 26;
+  top: 4.6rem;
+  right: 1rem;
+  display: grid;
+  gap: 0.35rem;
+  width: 13rem;
+  padding: 0.5rem;
+}
+
+.menu-panel button {
+  text-align: left;
+}
+
+.help-drawer {
+  position: fixed;
+  z-index: 28;
+  top: 0;
+  right: 0;
+  width: min(380px, 100vw);
+  height: 100vh;
+  padding: 1rem;
+  overflow: auto;
+}
+
+.help-drawer input {
+  width: 100%;
+  margin-bottom: 1rem;
+  padding: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #10161f;
+  color: var(--text);
+}
+
+[hidden] {
+  display: none !important;
+}
+
 .health-pill {
   display: inline-block;
   padding: 0.18rem 0.5rem;
@@ -756,6 +920,11 @@ svg {
   }
 
   .zoom-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .tm-controls,
+  .ctx-columns {
     grid-template-columns: 1fr;
   }
 

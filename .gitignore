@@ -8,3 +8,4 @@ dist/
 # Local reference captures may include authenticated page context.
 gammaflip.io *.txt
 gammaflip.io *.jpeg
+.playwright-cli/

@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>GEX Research Platform</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' x2='1' y1='0' y2='1'%3E%3Cstop stop-color='%2331c46b'/%3E%3Cstop offset='.55' stop-color='%235d9cec'/%3E%3Cstop offset='1' stop-color='%237d20ff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='32' cy='32' r='29' fill='url(%23g)'/%3E%3Ctext x='32' y='41' font-size='28' text-anchor='middle' font-family='Arial' font-weight='800' fill='%23070b0f'%3EG%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -36,6 +37,10 @@
 
       <main class="workspace">
         <section class="context-bar" aria-label="Market context">
+          <button id="ctxTrigger" class="ctx-pill" type="button" aria-haspopup="dialog" aria-controls="ctxModal">
+            <span id="ctxPillSymbol">BTC</span>
+            <span id="ctxPillMeta">All · 2 expirations</span>
+          </button>
           <div class="segmented" id="marketClassTabs">
             <button class="active" type="button">Crypto</button>
             <button type="button" disabled>TradFi</button>
@@ -135,7 +140,22 @@
               <button data-mode="hour" type="button">Hour</button>
             </div>
             <button id="reachButton" class="reach-button" type="button">Reach %</button>
+            <button id="chartControlsButton" type="button">Controls</button>
             <button id="studioCsvButton" type="button">CSV</button>
+          </section>
+
+          <section class="tm-controls panel" id="tmControlsBar">
+            <button id="tmPrevButton" type="button">|&lt;</button>
+            <button id="tmPlayButton" type="button">Play</button>
+            <button id="tmNextButton" type="button">&gt;|</button>
+            <select id="tmSpeed" aria-label="Playback speed">
+              <option value="1">1x</option>
+              <option value="2">2x</option>
+              <option value="4">4x</option>
+            </select>
+            <input id="tmDatePicker" type="date" value="2024-07-01" aria-label="Jump to date" />
+            <input id="tmScrubber" type="range" min="0" max="23" value="23" aria-label="Replay scrubber" />
+            <button id="tmShareButton" type="button">Share</button>
           </section>
 
           <section class="studio-layout">
@@ -179,8 +199,13 @@
           <article class="panel">
             <div class="panel-header">
               <h1>Term Structure</h1>
+              <div class="coverage-tabs" id="termViewToggle">
+                <button class="active" data-term-view="chart" type="button">Chart</button>
+                <button data-term-view="table" type="button">Table</button>
+              </div>
             </div>
             <svg id="termChart" role="img" aria-label="GEX term structure"></svg>
+            <div id="termTable" class="term-table-wrap" hidden></div>
           </article>
         </section>
 
@@ -213,6 +238,88 @@
           </article>
         </section>
       </main>
+
+      <div id="ctxModal" class="modal-backdrop" hidden role="dialog" aria-label="Choose chart context">
+        <div class="modal-card context-modal">
+          <div class="modal-header">
+            <strong>Chart Context</strong>
+            <button data-close-modal="ctxModal" type="button">Close</button>
+          </div>
+          <div class="ctx-columns">
+            <section>
+              <h2>Asset</h2>
+              <div id="ctxAssetList" class="ctx-list"></div>
+            </section>
+            <section>
+              <h2>Exchange</h2>
+              <div class="ctx-list">
+                <button class="active" type="button">All venues</button>
+                <button type="button">Deribit</button>
+                <button type="button">Bybit</button>
+                <button type="button">OKX</button>
+              </div>
+            </section>
+            <section>
+              <h2>Expiration</h2>
+              <div id="ctxExpiryList" class="ctx-list"></div>
+            </section>
+          </div>
+        </div>
+      </div>
+
+      <div id="reachPanel" class="popover-panel" hidden role="dialog" aria-label="Reach probability">
+        <div class="modal-header">
+          <strong>Reach probability</strong>
+          <button data-close-popover="reachPanel" type="button">Close</button>
+        </div>
+        <p>Odds price reaches each GEX level by your horizon. Simulated locally from current fixture volatility.</p>
+        <div id="reachRows" class="reach-rows"></div>
+      </div>
+
+      <div id="chartControlsPanel" class="popover-panel" hidden role="dialog" aria-label="Chart controls">
+        <div class="modal-header">
+          <strong>Chart Controls</strong>
+          <button data-close-popover="chartControlsPanel" type="button">Close</button>
+        </div>
+        <label><input id="showPositiveToggle" type="checkbox" checked /> Positive bars</label>
+        <label><input id="showNegativeToggle" type="checkbox" checked /> Negative bars</label>
+        <label><input id="showAbsoluteToggle" type="checkbox" checked /> Absolute profile</label>
+        <label><input id="showRegimeToggle" type="checkbox" checked /> Regime markers</label>
+      </div>
+
+      <div id="settingsDialog" class="modal-backdrop" hidden role="dialog" aria-label="Settings">
+        <div class="modal-card settings-card">
+          <div class="modal-header">
+            <strong>Settings</strong>
+            <button data-close-modal="settingsDialog" type="button">Close</button>
+          </div>
+          <label>Theme <select><option>Dark</option></select></label>
+          <label>Timezone <select><option>UTC</option><option>Local</option></select></label>
+          <label><input type="checkbox" checked /> Show compact chart labels</label>
+        </div>
+      </div>
+
+      <div id="menuPanel" class="menu-panel" hidden role="menu" aria-label="Application menu">
+        <button id="helpButton" type="button">Help</button>
+        <button id="tourButton" type="button">Guided Tour</button>
+        <button id="feedbackButton" type="button">Send Feedback</button>
+      </div>
+
+      <aside id="helpDrawer" class="help-drawer" hidden aria-label="Help drawer">
+        <div class="modal-header">
+          <strong>Help</strong>
+          <button data-close-modal="helpDrawer" type="button">Close</button>
+        </div>
+        <input type="search" placeholder="Search help..." />
+        <article>
+          <h2>Gamma Flip</h2>
+          <p>The level where aggregate dealer gamma pressure changes regime.</p>
+        </article>
+        <article>
+          <h2>Positive Gamma</h2>
+          <p>Dealers are more likely to dampen moves near concentrated walls.</p>
+        </article>
+      </aside>
     </div>
 
     <script type="module" src="/app.js"></script>
