@@ -1,0 +1,15 @@
+{
+  "name": "gex-research-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Crypto-first Gamma Exposure research platform prototype.",
+  "scripts": {
+    "start": "node src/server/server.js",
+    "test": "node --test",
+    "check": "node --check src/domain/gex.js && node --check src/server/api.js && node --check src/server/server.js && node --check src/public/app.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

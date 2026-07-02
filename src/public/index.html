@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GEX Research Platform</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">G</div>
+          <div>
+            <strong>GEX Research</strong>
+            <span>Gamma Exposure</span>
+          </div>
+        </div>
+        <nav aria-label="Main navigation">
+          <a class="active" href="#dashboard">Dashboard</a>
+          <a href="#strikes">Strikes</a>
+          <a href="#term">Term Structure</a>
+          <a href="#signals">Signals</a>
+          <a href="#notes">Research Notes</a>
+          <a href="#health">Data Health</a>
+        </nav>
+        <div class="sidebar-footer">
+          <span class="status-dot"></span>
+          <span>Market Data: sample Deribit fixture</span>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div class="symbol-tabs" id="symbolTabs" aria-label="Instrument selector"></div>
+          <label>
+            Expiry
+            <select id="expirySelect">
+              <option value="">All expiries</option>
+            </select>
+          </label>
+          <button id="refreshButton" type="button">Refresh</button>
+        </header>
+
+        <section id="dashboard" class="metric-grid" aria-label="GEX summary"></section>
+
+        <section class="main-grid">
+          <article class="panel chart-panel" id="strikes">
+            <div class="panel-header">
+              <div>
+                <h1>GEX by Strike</h1>
+                <p id="snapshotMeta">Loading market snapshot...</p>
+              </div>
+              <button id="csvButton" type="button">CSV</button>
+            </div>
+            <div class="chart-wrap">
+              <svg id="strikeChart" role="img" aria-label="Gamma exposure by strike"></svg>
+            </div>
+          </article>
+
+          <aside class="panel signal-card" id="signals">
+            <h2>Signal Regime</h2>
+            <div id="signalState" class="signal-state"></div>
+            <div class="risk-copy" id="riskCopy"></div>
+          </aside>
+        </section>
+
+        <section class="lower-grid">
+          <article class="panel" id="term">
+            <div class="panel-header">
+              <h2>Term Structure</h2>
+            </div>
+            <svg id="termChart" role="img" aria-label="GEX term structure"></svg>
+          </article>
+
+          <article class="panel" id="health">
+            <div class="panel-header">
+              <h2>Data Health</h2>
+            </div>
+            <div id="healthTable"></div>
+          </article>
+
+          <article class="panel" id="notes">
+            <div class="panel-header">
+              <h2>Research Notes</h2>
+              <button id="noteButton" type="button">New Note</button>
+            </div>
+            <div id="notesList" class="notes-list"></div>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
