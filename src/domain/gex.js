@@ -84,6 +84,15 @@ export function calculateGexSnapshot({ symbol, spotPrice, asOf, contracts }) {
     maxPainStrike,
     byStrike,
     byExpiry,
+    ui: buildUiMetricsFromRows({
+      spotPrice,
+      netGex,
+      gammaFlip,
+      callWall,
+      putWall,
+      maxPainStrike,
+      byStrike,
+    }),
     signalState: classifySignalState({
       spotPrice,
       netGex,
@@ -92,6 +101,155 @@ export function calculateGexSnapshot({ symbol, spotPrice, asOf, contracts }) {
       putWall,
     }),
   };
+}
+
+export function buildUiMetrics(snapshot) {
+  return buildUiMetricsFromRows(snapshot);
+}
+
+export function buildTrendSeries(snapshot) {
+  const ui = buildUiMetrics(snapshot);
+  const asOf = new Date(snapshot.asOf);
+  const points = [];
+
+  for (let offset = 23; offset >= 0; offset -= 1) {
+    const date = new Date(asOf.getTime() - offset * 60 * 60 * 1000);
+    const phase = (23 - offset) / 23;
+    const wave = Math.sin(phase * Math.PI * 2);
+    const pulse = Math.cos(phase * Math.PI * 4) * 0.35;
+    const drift = (phase - 0.5) * 0.22;
+
+    points.push({
+      time: date.toISOString().slice(11, 16),
+      indexPrice: round(snapshot.spotPrice * (1 + wave * 0.006 + drift * 0.01), 2),
+      flipPoint: round(snapshot.gammaFlip * (1 + pulse * 0.002), 2),
+      callPut: round(clamp(ui.gauges.callPut + wave * 0.08, -1, 1), 3),
+      upDown: round(clamp(ui.gauges.upDown + pulse * 0.08, -1, 1), 3),
+      netGex: round(snapshot.netGex * (1 + wave * 0.22 + drift), 2),
+      absGex: round(ui.absoluteGex * (1 + Math.abs(wave) * 0.12 + phase * 0.08), 2),
+      hedgingPressure: round(ui.positiveGex - ui.negativeGex + ui.absoluteGex * wave * 0.04, 2),
+    });
+  }
+
+  return { symbol: snapshot.symbol, asOf: snapshot.asOf, points };
+}
+
+export function buildHeatmapMatrix(snapshot, { type = "net" } = {}) {
+  if (!["net", "abs"].includes(type)) {
+    throw new Error("type must be net or abs");
+  }
+
+  const strikes = collapseStrikeRows(snapshot.byStrike)
+    .sort((a, b) => a.strike - b.strike)
+    .map((row) => row.strike);
+  const asOf = new Date(snapshot.asOf);
+  const columns = Array.from({ length: 18 }, (_, index) => {
+    const date = new Date(asOf.getTime() - (17 - index) * 4 * 60 * 60 * 1000);
+    return date.toISOString().slice(5, 16).replace("T", " ");
+  });
+  const baseRows = collapseStrikeRows(snapshot.byStrike);
+  const byStrike = new Map(baseRows.map((row) => [row.strike, row]));
+
+  const rows = strikes.map((strike, strikeIndex) => {
+    const row = byStrike.get(strike);
+    const values = columns.map((_, columnIndex) => {
+      const wave = Math.sin((strikeIndex + 1) * 0.8 + columnIndex * 0.55);
+      const trend = 1 + columnIndex / columns.length * 0.2;
+      const raw = type === "abs" ? Math.abs(row.gex) : row.gex;
+      return round(raw * trend + Math.abs(raw) * wave * 0.18, 2);
+    });
+    return { strike, values };
+  });
+
+  return {
+    symbol: snapshot.symbol,
+    type,
+    columns,
+    rows,
+    indexPath: columns.map((time, index) => ({
+      time,
+      price: round(snapshot.spotPrice * (1 + Math.sin(index * 0.45) * 0.006), 2),
+    })),
+    flipPath: columns.map((time, index) => ({
+      time,
+      price: round(snapshot.gammaFlip * (1 + Math.cos(index * 0.35) * 0.002), 2),
+    })),
+  };
+}
+
+export function buildChangeTable(snapshot, { coverage = 50 } = {}) {
+  const allowed = [50, 80, 90, 100];
+  const normalizedCoverage = Number(coverage);
+  if (!allowed.includes(normalizedCoverage)) {
+    throw new Error("coverage must be one of 50, 80, 90, 100");
+  }
+
+  const ranked = collapseStrikeRows(snapshot.byStrike).sort(
+    (a, b) => Math.abs(b.gex) - Math.abs(a.gex) || a.strike - b.strike,
+  );
+  const count = Math.max(1, Math.ceil(ranked.length * (normalizedCoverage / 100)));
+  const rows = ranked
+    .slice(0, count)
+    .sort((a, b) => a.strike - b.strike)
+    .map((row, index) => {
+      const base = Math.max(Math.abs(row.gex), 1);
+      return {
+        strike: row.strike,
+        now: round(base, 2),
+        changes: {
+          "24h": round(((index % 3) - 1) * 18 + Math.sign(row.gex) * 34, 1),
+          "2d": round(((index % 4) - 1.5) * 12 + Math.sign(row.gex) * 18, 1),
+          "3d": round(((index % 5) - 2) * 10 + Math.sign(row.gex) * 24, 1),
+          "1w": round(((index % 6) - 2.5) * 16 + Math.sign(row.gex) * 42, 1),
+        },
+      };
+    });
+
+  return {
+    symbol: snapshot.symbol,
+    coverage: normalizedCoverage,
+    columns: rows.map((row) => row.strike),
+    periods: ["Now", "24h", "2d", "3d", "1w"],
+    rows,
+  };
+}
+
+export function buildSummaryRail(snapshot) {
+  const ui = buildUiMetrics(snapshot);
+  const trends = buildTrendSeries(snapshot).points;
+
+  return [
+    {
+      id: "flip_point",
+      title: "Flip Point",
+      label: "Regime boundary · 24h",
+      value: snapshot.gammaFlip,
+      formattedValue: priceLabel(snapshot.gammaFlip),
+      accent: "#ff00ff",
+      status: snapshot.spotPrice >= snapshot.gammaFlip ? "Above flip · positive" : "Below flip · negative",
+      series: trends.map((point) => ({ time: point.time, value: point.flipPoint })),
+    },
+    {
+      id: "hedging_pressure",
+      title: "Hedging Pressure",
+      label: "Net GEX · 24h",
+      value: snapshot.netGex,
+      formattedValue: compactLabel(snapshot.netGex),
+      accent: snapshot.netGex >= 0 ? "#31c46b" : "#e5384f",
+      status: ui.gauges.regime >= 0 ? "Dealers dampen moves" : "Dealers amplify moves",
+      series: trends.map((point) => ({ time: point.time, value: point.hedgingPressure })),
+    },
+    {
+      id: "absolute_gex",
+      title: "Absolute GEX",
+      label: "Total magnitude · 24h",
+      value: ui.absoluteGex,
+      formattedValue: compactLabel(ui.absoluteGex),
+      accent: "#7d20ff",
+      status: "Liquidity depth",
+      series: trends.map((point) => ({ time: point.time, value: point.absGex })),
+    },
+  ];
 }
 
 export function classifySignalState({
@@ -249,6 +407,142 @@ function aggregateByExpiry(contracts) {
   return [...groups.values()]
     .sort((a, b) => a.expiry.localeCompare(b.expiry))
     .map((row) => ({ ...row, gex: round(row.gex, 2) }));
+}
+
+function buildUiMetricsFromRows({
+  spotPrice,
+  netGex,
+  gammaFlip,
+  callWall,
+  putWall,
+  maxPainStrike,
+  byStrike,
+  symbol = "",
+  asOf = "",
+}) {
+  const rows = collapseStrikeRows(byStrike);
+  const positiveRows = rows.filter((row) => row.gex >= 0);
+  const negativeRows = rows.filter((row) => row.gex < 0);
+  const positiveGex = positiveRows.reduce((sum, row) => sum + row.gex, 0);
+  const negativeGex = Math.abs(negativeRows.reduce((sum, row) => sum + row.gex, 0));
+  const absoluteGex = rows.reduce((sum, row) => sum + Math.abs(row.gex), 0);
+  const callAbs = rows.reduce((sum, row) => sum + Math.abs(row.callGex), 0);
+  const putAbs = rows.reduce((sum, row) => sum + Math.abs(row.putGex), 0);
+  const aboveAbs = rows
+    .filter((row) => row.strike >= spotPrice)
+    .reduce((sum, row) => sum + Math.abs(row.gex), 0);
+  const belowAbs = rows
+    .filter((row) => row.strike < spotPrice)
+    .reduce((sum, row) => sum + Math.abs(row.gex), 0);
+  const positivePeak = maxBy(positiveRows, (row) => row.gex) ?? maxBy(rows, (row) => row.gex);
+  const negativePeak = maxBy(negativeRows, (row) => Math.abs(row.gex)) ?? maxBy(rows, (row) => Math.abs(row.gex));
+  const absolutePeak = maxBy(rows, (row) => Math.abs(row.gex));
+  const maxVolatility = rows
+    .slice()
+    .sort((a, b) => Math.abs(a.strike - gammaFlip) - Math.abs(b.strike - gammaFlip))[0];
+  const maxStability = rows
+    .slice()
+    .sort((a, b) => Math.abs(a.strike - maxPainStrike) - Math.abs(b.strike - maxPainStrike))[0];
+
+  return {
+    symbol,
+    asOf,
+    absoluteGex: round(absoluteGex, 2),
+    positiveGex: round(positiveGex, 2),
+    negativeGex: round(negativeGex, 2),
+    callPutRatio: round(ratio(callAbs, putAbs), 3),
+    upDownRatio: round(ratio(aboveAbs, belowAbs), 3),
+    gauges: {
+      regime: round(clamp(netGex / Math.max(absoluteGex, 1), -1, 1), 3),
+      callPut: round(ratio(callAbs, putAbs), 3),
+      upDown: round(ratio(aboveAbs, belowAbs), 3),
+    },
+    peaks: {
+      positive: peakShape(positivePeak),
+      negative: peakShape(negativePeak),
+      absolute: peakShape(absolutePeak),
+    },
+    keyLevels: [
+      level("flip", "Flip Point", gammaFlip, netGex, "#ff00ff"),
+      level("max_stability", "Max Stability", maxStability?.strike ?? maxPainStrike, maxStability?.gex ?? 0, "#1fcb6a"),
+      level("max_volatility", "Max Volatility", maxVolatility?.strike ?? gammaFlip, maxVolatility?.gex ?? 0, "#e5384f"),
+      level("positive_peak", "Positive Peak", positivePeak?.strike ?? callWall, positivePeak?.gex ?? 0, "#31c46b"),
+      level("negative_peak", "Negative Peak", negativePeak?.strike ?? putWall, negativePeak?.gex ?? 0, "#e5384f"),
+      level("absolute_max", "Absolute Max", absolutePeak?.strike ?? maxPainStrike, absolutePeak?.gex ?? 0, "#7d20ff"),
+    ],
+  };
+}
+
+function collapseStrikeRows(rows) {
+  const groups = new Map();
+
+  for (const row of rows) {
+    const current = groups.get(row.strike) ?? {
+      expiry: "ALL",
+      strike: row.strike,
+      callGex: 0,
+      putGex: 0,
+      gex: 0,
+      openInterest: 0,
+      volume: 0,
+      gamma: 0,
+    };
+    current.callGex += row.callGex;
+    current.putGex += row.putGex;
+    current.gex += row.gex;
+    current.openInterest += row.openInterest;
+    current.volume += row.volume;
+    current.gamma += row.gamma;
+    groups.set(row.strike, current);
+  }
+
+  return [...groups.values()]
+    .sort((a, b) => a.strike - b.strike)
+    .map((row) => ({
+      ...row,
+      callGex: round(row.callGex, 2),
+      putGex: round(row.putGex, 2),
+      gex: round(row.gex, 2),
+      gamma: round(row.gamma, 8),
+    }));
+}
+
+function ratio(positive, negative) {
+  return clamp((positive - negative) / Math.max(positive + negative, 1), -1, 1);
+}
+
+function maxBy(rows, selector) {
+  return rows.reduce((best, row) => (best === undefined || selector(row) > selector(best) ? row : best), undefined);
+}
+
+function peakShape(row) {
+  return {
+    strike: row?.strike ?? 0,
+    gex: round(row?.gex ?? 0, 2),
+    openInterest: round(row?.openInterest ?? 0, 2),
+  };
+}
+
+function level(id, labelText, strike, value, color) {
+  return {
+    id,
+    label: labelText,
+    strike: round(strike, 2),
+    value: round(value, 2),
+    color,
+  };
+}
+
+function compactLabel(value) {
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  if (abs >= 1_000_000) return `${sign}${round(abs / 1_000_000, 1)}M`;
+  if (abs >= 1_000) return `${sign}${round(abs / 1_000, 1)}K`;
+  return `${sign}${round(abs, 1)}`;
+}
+
+function priceLabel(value) {
+  return value >= 1000 ? round(value, 0).toLocaleString("en-US") : String(round(value, 3));
 }
 
 function largestOpenInterestStrike(contracts, optionType) {

@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildChangeTable,
+  buildHeatmapMatrix,
+  buildTrendSeries,
+  buildUiMetrics,
   calculateGexSnapshot,
   classifySignalState,
   parseDeribitInstrumentName,
@@ -95,4 +99,64 @@ test("classifySignalState flags negative gamma and breakout risk", () => {
   assert.equal(state.regime, "negative_gamma");
   assert.equal(state.primaryRisk, "breakout_risk");
   assert.equal(state.flipDistancePct < 1, true);
+});
+
+test("buildUiMetrics returns bounded gauges and all V2 key levels", () => {
+  const snapshot = calculateGexSnapshot({
+    symbol: "BTC",
+    spotPrice: 61200,
+    asOf: "2024-07-01T12:00:00.000Z",
+    contracts,
+  });
+
+  const metrics = buildUiMetrics(snapshot);
+
+  assert.equal(
+    Object.values(metrics.gauges).every((value) => value >= -1 && value <= 1),
+    true,
+  );
+  assert.deepEqual(
+    metrics.keyLevels.map((level) => level.id),
+    ["flip", "max_stability", "max_volatility", "positive_peak", "negative_peak", "absolute_max"],
+  );
+  assert.equal(typeof metrics.absoluteGex, "number");
+  assert.equal(typeof metrics.peaks.positive.strike, "number");
+  assert.equal(typeof metrics.peaks.negative.strike, "number");
+});
+
+test("buildChangeTable expands rows as coverage increases", () => {
+  const snapshot = calculateGexSnapshot({
+    symbol: "BTC",
+    spotPrice: 61200,
+    asOf: "2024-07-01T12:00:00.000Z",
+    contracts,
+  });
+
+  const topHalf = buildChangeTable(snapshot, { coverage: 50 });
+  const allRows = buildChangeTable(snapshot, { coverage: 100 });
+
+  assert.equal(topHalf.columns.length > 0, true);
+  assert.equal(topHalf.periods.includes("24h"), true);
+  assert.equal(allRows.rows.length > topHalf.rows.length, true);
+});
+
+test("buildTrendSeries and buildHeatmapMatrix are deterministic and non-empty", () => {
+  const snapshot = calculateGexSnapshot({
+    symbol: "BTC",
+    spotPrice: 61200,
+    asOf: "2024-07-01T12:00:00.000Z",
+    contracts,
+  });
+
+  const trends = buildTrendSeries(snapshot);
+  const netHeatmap = buildHeatmapMatrix(snapshot, { type: "net" });
+  const absHeatmap = buildHeatmapMatrix(snapshot, { type: "abs" });
+
+  assert.equal(trends.points.length, 24);
+  assert.equal(trends.points[0].time, "13:00");
+  assert.equal(trends.points.at(-1).time, "12:00");
+  assert.equal(netHeatmap.rows.length > 0, true);
+  assert.equal(absHeatmap.rows.length, netHeatmap.rows.length);
+  assert.deepEqual(buildTrendSeries(snapshot), trends);
+  assert.deepEqual(buildHeatmapMatrix(snapshot, { type: "net" }), netHeatmap);
 });

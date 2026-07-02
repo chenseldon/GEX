@@ -8,30 +8,38 @@
   </head>
   <body>
     <div class="app-shell">
-      <aside class="sidebar">
+      <header class="app-header">
         <div class="brand">
           <div class="brand-mark">G</div>
           <div>
             <strong>GEX Research</strong>
-            <span>Gamma Exposure</span>
+            <span id="productLabel">Dashboard</span>
           </div>
         </div>
-        <nav aria-label="Main navigation">
-          <a class="active" href="#dashboard">Dashboard</a>
-          <a href="#strikes">Strikes</a>
-          <a href="#term">Term Structure</a>
-          <a href="#signals">Signals</a>
-          <a href="#notes">Research Notes</a>
-          <a href="#health">Data Health</a>
+
+        <nav class="primary-nav" aria-label="Main navigation">
+          <button class="active" data-page="dashboard" type="button">Dashboard</button>
+          <button data-page="studio" type="button">Studio</button>
+          <button data-page="strikes" type="button">Strikes</button>
+          <button data-page="term" type="button">Term Structure</button>
+          <button data-page="signals" type="button">Signals</button>
+          <button data-page="notes" type="button">Research Notes</button>
+          <button data-page="health" type="button">Data Health</button>
         </nav>
-        <div class="sidebar-footer">
-          <span class="status-dot"></span>
-          <span>Market Data: sample Deribit fixture</span>
+
+        <div class="header-actions">
+          <button id="refreshButton" class="countdown" type="button">50s</button>
+          <button id="settingsButton" class="icon-button" type="button" aria-label="Settings">Settings</button>
+          <button id="menuButton" class="icon-button" type="button" aria-label="Menu">Menu</button>
         </div>
-      </aside>
+      </header>
 
       <main class="workspace">
-        <header class="topbar">
+        <section class="context-bar" aria-label="Market context">
+          <div class="segmented" id="marketClassTabs">
+            <button class="active" type="button">Crypto</button>
+            <button type="button" disabled>TradFi</button>
+          </div>
           <div class="symbol-tabs" id="symbolTabs" aria-label="Instrument selector"></div>
           <label>
             Expiry
@@ -39,53 +47,169 @@
               <option value="">All expiries</option>
             </select>
           </label>
-          <button id="refreshButton" type="button">Refresh</button>
-        </header>
-
-        <section id="dashboard" class="metric-grid" aria-label="GEX summary"></section>
-
-        <section class="main-grid">
-          <article class="panel chart-panel" id="strikes">
-            <div class="panel-header">
-              <div>
-                <h1>GEX by Strike</h1>
-                <p id="snapshotMeta">Loading market snapshot...</p>
-              </div>
-              <button id="csvButton" type="button">CSV</button>
-            </div>
-            <div class="chart-wrap">
-              <svg id="strikeChart" role="img" aria-label="Gamma exposure by strike"></svg>
-            </div>
-          </article>
-
-          <aside class="panel signal-card" id="signals">
-            <h2>Signal Regime</h2>
-            <div id="signalState" class="signal-state"></div>
-            <div class="risk-copy" id="riskCopy"></div>
-          </aside>
+          <label>
+            Time
+            <input id="historyInput" type="range" min="0" max="23" value="23" />
+          </label>
+          <label class="switch">
+            <input id="liveToggle" type="checkbox" checked />
+            <span>Live</span>
+          </label>
+          <div class="context-meta">
+            <strong id="indexPrice">--</strong>
+            <span id="dataSourceLabel">Deribit + Bybit + OKX</span>
+            <span id="dataTimestamp">Loading...</span>
+          </div>
         </section>
 
-        <section class="lower-grid">
-          <article class="panel" id="term">
+        <section id="dashboardPage" class="page active-page">
+          <section class="gauge-row" id="gaugeRow" aria-label="GEX gauges"></section>
+
+          <section class="dashboard-grid">
+            <article class="panel chart-panel">
+              <div class="panel-header">
+                <div>
+                  <h1>GEX by Strike</h1>
+                  <p id="dashboardSnapshotMeta">Loading dashboard snapshot...</p>
+                </div>
+                <button id="dashboardCsvButton" type="button">CSV</button>
+              </div>
+              <svg id="dashboardStrikeChart" class="dual-chart" role="img" aria-label="Dashboard GEX by strike"></svg>
+            </article>
+
+            <aside class="panel key-levels-panel">
+              <div class="panel-header">
+                <h2>Key Levels</h2>
+              </div>
+              <div id="keyLevelsTable" class="key-levels"></div>
+            </aside>
+          </section>
+
+          <section class="trend-grid" id="trendGrid" aria-label="24 hour GEX trends"></section>
+
+          <section class="heatmap-grid">
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Net GEX Heatmap (3D)</h2>
+              </div>
+              <div id="netHeatmap" class="heatmap"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Abs GEX Heatmap (3D)</h2>
+              </div>
+              <div id="absHeatmap" class="heatmap"></div>
+            </article>
+          </section>
+
+          <section class="panel">
             <div class="panel-header">
-              <h2>Term Structure</h2>
+              <h2>GEX Change Table</h2>
+              <div class="coverage-tabs" id="coverageTabs">
+                <button class="active" data-coverage="50" type="button">50%</button>
+                <button data-coverage="80" type="button">80%</button>
+                <button data-coverage="90" type="button">90%</button>
+                <button data-coverage="100" type="button">100%</button>
+              </div>
+            </div>
+            <div id="changeTable" class="change-table-wrap"></div>
+          </section>
+
+          <div class="dashboard-cta">
+            <button data-page-jump="studio" type="button">Open in GEX Studio -></button>
+            <span>Full interactive gamma analysis with Time Machine, strike markers, and summary rail.</span>
+          </div>
+        </section>
+
+        <section id="studioPage" class="page">
+          <section class="studio-toolbar panel">
+            <div class="category-tabs" id="categoryTabs">
+              <button class="active" data-category="now" type="button">Now</button>
+              <button data-category="expiry" type="button">Expiry</button>
+              <button data-category="history" type="button">History</button>
+              <button data-category="forecast" type="button">Forecast</button>
+            </div>
+            <div class="view-tabs" id="modeTabs">
+              <button class="active" data-mode="snapshot" type="button">Snapshot</button>
+              <button data-mode="day" type="button">Day</button>
+              <button data-mode="hour" type="button">Hour</button>
+            </div>
+            <button id="reachButton" class="reach-button" type="button">Reach %</button>
+            <button id="studioCsvButton" type="button">CSV</button>
+          </section>
+
+          <section class="studio-layout">
+            <article class="panel chart-panel">
+              <div class="panel-header">
+                <div>
+                  <h1 id="studioTitle">GEX by Strike</h1>
+                  <p id="studioSnapshotMeta">Loading studio snapshot...</p>
+                </div>
+              </div>
+              <svg id="studioStrikeChart" class="studio-chart" role="img" aria-label="Studio GEX by strike"></svg>
+            </article>
+
+            <aside class="summary-rail" id="summaryRail" aria-label="Summary rail"></aside>
+          </section>
+
+          <section class="marker-strip panel">
+            <div id="markerChips" class="marker-chips"></div>
+          </section>
+
+          <section class="zoom-panel panel">
+            <span>Zoom (+/-%)</span>
+            <strong id="zoomValue">7%</strong>
+            <input id="zoomSlider" type="range" min="1" max="100" value="7" />
+          </section>
+        </section>
+
+        <section id="strikesPage" class="page focused-page">
+          <article class="panel">
+            <div class="panel-header">
+              <div>
+                <h1>Strikes</h1>
+                <p>Net and absolute gamma by strike with key marker context.</p>
+              </div>
+            </div>
+            <svg id="strikesChart" class="dual-chart" role="img" aria-label="Focused strikes chart"></svg>
+          </article>
+        </section>
+
+        <section id="termPage" class="page focused-page">
+          <article class="panel">
+            <div class="panel-header">
+              <h1>Term Structure</h1>
             </div>
             <svg id="termChart" role="img" aria-label="GEX term structure"></svg>
           </article>
+        </section>
 
-          <article class="panel" id="health">
+        <section id="signalsPage" class="page focused-page">
+          <article class="panel">
             <div class="panel-header">
-              <h2>Data Health</h2>
+              <h1>Signals</h1>
             </div>
-            <div id="healthTable"></div>
+            <div id="signalState" class="signal-state"></div>
+            <div id="riskCopy" class="risk-copy"></div>
           </article>
+        </section>
 
-          <article class="panel" id="notes">
+        <section id="notesPage" class="page focused-page">
+          <article class="panel">
             <div class="panel-header">
-              <h2>Research Notes</h2>
+              <h1>Research Notes</h1>
               <button id="noteButton" type="button">New Note</button>
             </div>
             <div id="notesList" class="notes-list"></div>
+          </article>
+        </section>
+
+        <section id="healthPage" class="page focused-page">
+          <article class="panel">
+            <div class="panel-header">
+              <h1>Data Health</h1>
+            </div>
+            <div id="healthTable"></div>
           </article>
         </section>
       </main>
