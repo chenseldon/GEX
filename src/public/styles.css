@@ -276,6 +276,8 @@ body[data-page="studio"] .context-bar {
 .category-tabs,
 .view-tabs,
 .expiry-view-tabs,
+.history-window-tabs,
+.history-gex-tabs,
 .coverage-tabs {
   display: inline-flex;
   gap: 0.22rem;
@@ -700,6 +702,23 @@ body[data-page="studio"] .expiry-view-tabs {
   background: #101d2b;
 }
 
+body[data-page="studio"] .history-window-tabs,
+body[data-page="studio"] .history-gex-tabs {
+  margin-left: 0.75rem;
+  border-color: #2b3541;
+  background: #141a22;
+}
+
+body[data-page="studio"] .history-window-tabs span,
+body[data-page="studio"] .history-gex-tabs span {
+  align-self: center;
+  padding: 0 0.55rem;
+  color: #7e8794;
+  font-size: 0.82rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
 body[data-page="studio"] .view-tabs button {
   padding: 0.5rem 0.78rem;
 }
@@ -707,6 +726,23 @@ body[data-page="studio"] .view-tabs button {
 body[data-page="studio"] .expiry-view-tabs button {
   min-width: 90px;
   padding: 0.5rem 0.78rem;
+}
+
+body[data-page="studio"] .history-window-tabs button,
+body[data-page="studio"] .history-gex-tabs button {
+  min-width: 58px;
+  padding: 0.48rem 0.72rem;
+  border-color: transparent;
+  background: transparent;
+  color: #8b929e;
+  font-weight: 800;
+}
+
+body[data-page="studio"] .history-window-tabs button.active,
+body[data-page="studio"] .history-gex-tabs button.active {
+  border-color: #526caa;
+  background: #243069;
+  color: #8ea3ff;
 }
 
 .expiry-metric-tabs {
@@ -771,7 +807,6 @@ body[data-page="studio"] .studio-category-details {
   display: none;
 }
 
-body[data-page="studio"] .active-page[data-category-mode="history"] .studio-category-details,
 body[data-page="studio"] .active-page[data-category-mode="forecast"] .studio-category-details {
   display: grid;
 }
@@ -797,6 +832,39 @@ body[data-page="studio"] .active-page[data-category-mode="expiry"] .panel-header
 
 body[data-page="studio"] .active-page[data-category-mode="expiry"] .studio-chart {
   min-height: 650px;
+}
+
+body[data-page="studio"] .active-page[data-category-mode="history"] .studio-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body[data-page="studio"] .active-page[data-category-mode="history"] .summary-rail,
+body[data-page="studio"] .active-page[data-category-mode="history"] .marker-strip,
+body[data-page="studio"] .active-page[data-category-mode="history"] .zoom-panel {
+  display: none;
+}
+
+body[data-page="studio"] .active-page[data-category-mode="history"] .chart-panel {
+  overflow: visible;
+  background: #111820;
+}
+
+body[data-page="studio"] .active-page[data-category-mode="history"] .panel-header {
+  border-bottom: 1px solid #202b37;
+  background: #161d26;
+  padding: 0.55rem 0.75rem;
+}
+
+body[data-page="studio"] .active-page[data-category-mode="history"] .panel-header h1 {
+  font-size: 1.02rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+body[data-page="studio"] .active-page[data-category-mode="history"] .studio-chart {
+  min-height: 710px;
+  max-height: none;
+  background: #0b0f15;
 }
 
 .tm-controls select,
@@ -1105,6 +1173,66 @@ body[data-page="studio"] .zoom-panel {
 
 .legend-line {
   stroke-width: 2.4;
+}
+
+.history-plot-bg {
+  stroke: transparent;
+}
+
+.history-cell,
+.history-legend-cell {
+  stroke: transparent;
+}
+
+.history-grid-line {
+  opacity: 0.16;
+  stroke-width: 1;
+}
+
+.history-axis-label {
+  fill: #c8ccd3;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.history-axis-title,
+.history-legend-title {
+  fill: #c8ccd3;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.history-watermark {
+  fill: rgb(70 76 84 / 28%);
+  font-size: 58px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  transform: rotate(-28deg);
+}
+
+.history-price-outline,
+.history-flip-outline {
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.history-price-line,
+.history-flip-line {
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.history-line-label,
+.history-flip-label {
+  paint-order: stroke;
+  stroke: #0b0f15;
+  stroke-width: 5px;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.history-legend-tick {
+  stroke-width: 1.3;
 }
 
 .zoom-panel {

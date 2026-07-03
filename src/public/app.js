@@ -6,6 +6,8 @@ const state = {
   category: "now",
   expiryView: "levels",
   expiryMetric: "oi",
+  historyWindow: "24h",
+  historyGexType: "net",
   maxDte: 20,
   coverage: 50,
   zoom: 16,
@@ -60,6 +62,8 @@ const els = {
   modeTabs: document.querySelector("#modeTabs"),
   expiryViewTabs: document.querySelector("#expiryViewTabs"),
   expiryMetricTabs: document.querySelector("#expiryMetricTabs"),
+  historyWindowTabs: document.querySelector("#historyWindowTabs"),
+  historyGexTabs: document.querySelector("#historyGexTabs"),
   reachButton: document.querySelector("#reachButton"),
   reachPanel: document.querySelector("#reachPanel"),
   reachRows: document.querySelector("#reachRows"),
@@ -221,6 +225,22 @@ function bindEvents() {
     renderStudio();
   });
 
+  els.historyWindowTabs.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-history-window]");
+    if (!button) return;
+    state.historyWindow = button.dataset.historyWindow;
+    setActiveButton(els.historyWindowTabs, button);
+    renderStudio();
+  });
+
+  els.historyGexTabs.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-history-gex]");
+    if (!button) return;
+    state.historyGexType = button.dataset.historyGex;
+    setActiveButton(els.historyGexTabs, button);
+    renderStudio();
+  });
+
   els.coverageTabs.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-coverage]");
     if (!button) return;
@@ -289,12 +309,14 @@ function bindStudioChartInteractions() {
   let dragStart = null;
 
   els.studioStrikeChart.addEventListener("pointerdown", (event) => {
+    if (["expiry", "history"].includes(state.category)) return;
     dragStart = { x: event.clientX, panOffset: state.panOffset };
     els.studioStrikeChart.setPointerCapture?.(event.pointerId);
     els.studioStrikeChart.classList.add("is-dragging");
   });
 
   els.studioStrikeChart.addEventListener("pointermove", (event) => {
+    if (["expiry", "history"].includes(state.category)) return;
     const strike = strikeFromPointer(event);
     if (strike) state.crosshair = strike;
     if (dragStart) {
@@ -311,6 +333,7 @@ function bindStudioChartInteractions() {
   });
 
   els.studioStrikeChart.addEventListener("pointerleave", () => {
+    if (["expiry", "history"].includes(state.category)) return;
     if (!dragStart) {
       state.crosshair = null;
       renderStudio();
@@ -321,7 +344,7 @@ function bindStudioChartInteractions() {
     "wheel",
     (event) => {
       event.preventDefault();
-      if (state.category === "expiry") return;
+      if (["expiry", "history"].includes(state.category)) return;
       const step = event.deltaY < 0 ? -2 : 2;
       state.zoom = clamp(state.zoom + step, Number(els.zoomSlider.min), Number(els.zoomSlider.max));
       els.zoomSlider.value = String(state.zoom);
@@ -461,15 +484,22 @@ function renderStudio() {
   document.querySelector("#studioPage").dataset.categoryMode = state.category;
   document.querySelector("#studioPage").dataset.expiryView = state.expiryView;
   document.querySelector("#studioPage").dataset.expiryMetric = state.expiryMetric;
+  document.querySelector("#studioPage").dataset.historyWindow = state.historyWindow;
+  document.querySelector("#studioPage").dataset.historyGex = state.historyGexType;
   renderStudioControls();
   renderStudioTitle();
   renderStudioModeSummary();
   renderStudioCategoryDetails();
   const selected = selectedMarker();
-  const markerText = selected ? ` | ${shortLevel(selected.id)} ${price(selected.strike)}` : "";
+  const markerText = selected && !["expiry", "history"].includes(state.category) ? ` | ${shortLevel(selected.id)} ${price(selected.strike)}` : "";
   const chartName = studioChartName();
   const splitText = state.category === "expiry" && state.expiryMetric === "gexUd" ? ` | Split at $${price(state.studio.spotPrice)}` : "";
-  els.studioSnapshotMeta.textContent = `${state.studio.symbol}: ${chartName} | ${state.expiry || "All expiries"} | ${formatTimestamp(state.studio.asOf)} | ${state.live ? "Live" : "Snapshot"}${splitText}${markerText}`;
+  if (state.category === "history") {
+    const history = historyHeatmapData(state.historyWindow, state.historyGexType);
+    els.studioSnapshotMeta.textContent = `${state.dashboard.sourceLabel} · ${history.rangeLabel}`;
+  } else {
+    els.studioSnapshotMeta.textContent = `${state.studio.symbol}: ${chartName} | ${state.expiry || "All expiries"} | ${formatTimestamp(state.studio.asOf)} | ${state.live ? "Live" : "Snapshot"}${splitText}${markerText}`;
+  }
   renderStudioMainChart();
   renderSummaryRail();
   renderLayerChips();
@@ -480,7 +510,7 @@ function renderStudioTitle() {
   const titles = {
     now: `${state.symbol}: GEX by Strike`,
     expiry: `${state.symbol}: ${studioChartName()}`,
-    history: `${state.symbol}: GEX History Replay`,
+    history: `${state.symbol}: GEX Heatmap`,
     forecast: `${state.symbol}: GEX Forecast`,
   };
   els.studioTitle.textContent = titles[state.category];
@@ -488,13 +518,18 @@ function renderStudioTitle() {
 
 function renderStudioControls() {
   const isExpiry = state.category === "expiry";
-  els.modeTabs.hidden = isExpiry;
+  const isHistory = state.category === "history";
+  els.modeTabs.hidden = isExpiry || isHistory;
   els.expiryViewTabs.hidden = !isExpiry;
   els.expiryMetricTabs.hidden = !(isExpiry && state.expiryView === "positioning");
-  els.reachButton.hidden = isExpiry;
-  els.chartControlsButton.hidden = isExpiry;
+  els.historyWindowTabs.hidden = !isHistory;
+  els.historyGexTabs.hidden = !isHistory;
+  els.reachButton.hidden = isExpiry || isHistory;
+  els.chartControlsButton.hidden = isExpiry ? true : false;
   setActiveByDataset(els.expiryViewTabs, "expiryView", state.expiryView);
   setActiveByDataset(els.expiryMetricTabs, "expiryMetric", state.expiryMetric);
+  setActiveByDataset(els.historyWindowTabs, "historyWindow", state.historyWindow);
+  setActiveByDataset(els.historyGexTabs, "historyGex", state.historyGexType);
   if (isExpiry) {
     els.zoomSlider.min = "-1";
     els.zoomSlider.max = "356";
@@ -513,6 +548,7 @@ function renderStudioControls() {
 }
 
 function studioChartName() {
+  if (state.category === "history") return "GEX Heatmap";
   if (state.category !== "expiry") return "GEX by Strike";
   if (state.expiryView === "levels") return "GEX Term Structure";
   return {
@@ -527,6 +563,11 @@ function studioChartName() {
 }
 
 function renderStudioMainChart() {
+  if (state.category === "history") {
+    renderHistoryHeatmapChart(els.studioStrikeChart, historyHeatmapData(state.historyWindow, state.historyGexType));
+    return;
+  }
+
   if (state.category === "expiry") {
     if (state.expiryView === "levels") {
       renderExpiryLevelsChart(els.studioStrikeChart, expiryBuckets(), state.studio.spotPrice);
@@ -843,6 +884,321 @@ function renderTermChart(svg, rows) {
     const usable = height - pad.top - pad.bottom;
     return pad.top + ((maxAbs - value) / (maxAbs * 2 || 1)) * usable;
   }
+}
+
+function historyHeatmapData(windowKey, gexType) {
+  const configs = {
+    "24h": {
+      columns: 96,
+      rows: 28,
+      yMin: 57500,
+      yMax: 64200,
+      rangeLabel: "Jul 2 07:26 - Jul 3 07:16 UTC",
+      xLabels: ["Jul 02\n07:26", "Jul 02\n09:13", "Jul 02\n11:15", "Jul 02\n13:01", "Jul 02\n14:50", "Jul 02\n16:38", "Jul 02\n18:26", "Jul 02\n20:15", "Jul 02\n22:02", "Jul 02\n23:50", "Jul 03\n01:37", "Jul 03\n03:25", "Jul 03\n05:12", "Jul 03\n07:01"],
+      priceTicks: [58000, 59000, 60000, 61000, 62000, 63000, 64000],
+      scale: { min: -14, max: 20, ticks: [-12, -8, -4, 0, 5, 10, 15, 20] },
+    },
+    "3d": {
+      columns: 120,
+      rows: 30,
+      yMin: 55800,
+      yMax: 64200,
+      rangeLabel: "Jul 1 00:14 - Jul 3 07:16 UTC",
+      xLabels: ["Jul 01\n00:14", "Jul 01\n04:35", "Jul 01\n08:56", "Jul 01\n13:15", "Jul 01\n17:35", "Jul 01\n21:57", "Jul 02\n02:18", "Jul 02\n06:39", "Jul 02\n11:15", "Jul 02\n15:36", "Jul 02\n19:59", "Jul 03\n00:20", "Jul 03\n04:42"],
+      priceTicks: [56000, 57000, 58000, 59000, 60000, 61000, 62000, 63000, 64000],
+      scale: { min: -22, max: 24, ticks: [-20, -15, -10, -5, 0, 5, 10, 15, 20] },
+    },
+    "7d": {
+      columns: 150,
+      rows: 30,
+      yMin: 55800,
+      yMax: 64200,
+      rangeLabel: "Jun 27 00:01 - Jul 3 07:16 UTC",
+      xLabels: ["Jun 27\n00:01", "Jun 27\n12:33", "Jun 28\n01:05", "Jun 28\n13:32", "Jun 29\n02:07", "Jun 29\n14:40", "Jun 30\n03:14", "Jun 30\n15:46", "Jul 01\n04:19", "Jul 01\n16:49", "Jul 02\n05:23", "Jul 02\n18:11", "Jul 03\n06:45"],
+      priceTicks: [56000, 57000, 58000, 59000, 60000, 61000, 62000, 63000, 64000],
+      scale: { min: -22, max: 18, ticks: [-20, -15, -10, -5, 0, 4, 8, 12, 16] },
+    },
+    "30d": {
+      columns: 160,
+      rows: 34,
+      yMin: 55700,
+      yMax: 70300,
+      rangeLabel: "Jun 4 00:01 - Jul 3 07:16 UTC",
+      xLabels: ["Jun 04\n00:01", "Jun 06\n08:46", "Jun 08\n22:01", "Jun 11\n07:01", "Jun 13\n16:01", "Jun 16\n01:16", "Jun 18\n10:46", "Jun 20\n21:09", "Jun 23\n07:29", "Jun 25\n18:01", "Jun 28\n04:25", "Jun 30\n14:44", "Jul 03\n01:22"],
+      priceTicks: [56000, 58000, 60000, 62000, 64000, 66000, 68000, 70000],
+      scale: { min: -42, max: 28, ticks: [-40, -30, -20, -10, 0, 6, 12, 18, 24] },
+    },
+    "90d": {
+      columns: 170,
+      rows: 36,
+      yMin: 55700,
+      yMax: 85300,
+      rangeLabel: "Apr 5 00:01 - Jul 3 07:16 UTC",
+      xLabels: ["Apr 05\n00:01", "Apr 12\n08:46", "Apr 19\n17:46", "Apr 27\n02:46", "May 04\n11:46", "May 11\n20:46", "May 19\n05:46", "May 26\n14:46", "Jun 03\n00:16", "Jun 10\n13:31", "Jun 17\n22:50", "Jun 25\n12:23", "Jul 03\n01:52"],
+      priceTicks: [57500, 60000, 62500, 65000, 67500, 70000, 72500, 75000, 77500, 80000, 82500, 85000],
+      scale: { min: -34, max: 48, ticks: [-32, -24, -16, -8, 0, 10, 20, 30, 40] },
+    },
+  };
+  const config = configs[windowKey] ?? configs["24h"];
+  const strikes = Array.from({ length: config.rows }, (_, index) => config.yMin + (index / (config.rows - 1)) * (config.yMax - config.yMin));
+  const time = Array.from({ length: config.columns }, (_, index) => index / (config.columns - 1));
+  const priceSeries = time.map((t, index) => historyPrice(config, windowKey, t, index));
+  const flipSeries = time.map((t, index) => historyFlip(config, windowKey, t, index));
+  const values = strikes.map((strike) =>
+    time.map((t, index) => {
+      const raw = historyGexValue(strike, t, index, config, windowKey);
+      return gexType === "abs" ? Math.abs(raw) : raw;
+    }),
+  );
+  const scale = gexType === "abs" ? { min: 0, max: Math.max(Math.abs(config.scale.min), config.scale.max), ticks: [0, 5, 10, 15, 20, 30, 40].filter((tick) => tick <= Math.max(Math.abs(config.scale.min), config.scale.max)) } : config.scale;
+  return { ...config, gexType, strikes, time, priceSeries, flipSeries, values, scale };
+}
+
+function historyPrice(config, windowKey, t, index) {
+  const paths = {
+    "24h": [
+      [0, 60150],
+      [0.12, 60550],
+      [0.25, 61250],
+      [0.38, 62000],
+      [0.52, 61650],
+      [0.68, 61380],
+      [0.82, 61520],
+      [1, 61750],
+    ],
+    "3d": [
+      [0, 58400],
+      [0.22, 59000],
+      [0.32, 60300],
+      [0.54, 59800],
+      [0.68, 61800],
+      [1, 61750],
+    ],
+    "7d": [
+      [0, 60000],
+      [0.2, 60400],
+      [0.36, 59500],
+      [0.55, 58500],
+      [0.72, 60000],
+      [0.88, 61600],
+      [1, 61750],
+    ],
+    "30d": [
+      [0, 64000],
+      [0.12, 61000],
+      [0.36, 66800],
+      [0.55, 62800],
+      [0.7, 64000],
+      [0.82, 59500],
+      [1, 61750],
+    ],
+    "90d": [
+      [0, 67000],
+      [0.18, 76000],
+      [0.42, 82000],
+      [0.56, 76000],
+      [0.66, 61000],
+      [0.84, 65000],
+      [0.94, 59000],
+      [1, 61750],
+    ],
+  };
+  const base = interpolatePath(paths[windowKey] ?? paths["24h"], t);
+  const noise = Math.sin(index * 0.61) * 105 + Math.sin(index * 1.47) * 62 + Math.sin(t * Math.PI * 18) * 74;
+  return clamp(base + noise, config.yMin + 350, config.yMax - 350);
+}
+
+function historyFlip(config, windowKey, t, index) {
+  const paths = {
+    "24h": [
+      [0, 59850],
+      [0.05, 60200],
+      [0.25, 60480],
+      [0.48, 60540],
+      [0.78, 60520],
+      [1, 60670],
+    ],
+    "3d": [
+      [0, 59600],
+      [0.35, 59680],
+      [0.58, 59900],
+      [0.6, 60300],
+      [0.75, 60540],
+      [1, 60670],
+    ],
+    "7d": [
+      [0, 60350],
+      [0.35, 60200],
+      [0.55, 60050],
+      [0.65, 59400],
+      [0.86, 59850],
+      [1, 60670],
+    ],
+    "30d": [
+      [0, 67400],
+      [0.08, 63500],
+      [0.42, 65600],
+      [0.63, 64000],
+      [0.84, 60200],
+      [1, 60670],
+    ],
+    "90d": [
+      [0, 67000],
+      [0.2, 72000],
+      [0.45, 78000],
+      [0.58, 76000],
+      [0.66, 64000],
+      [0.9, 63500],
+      [1, 60670],
+    ],
+  };
+  const base = interpolatePath(paths[windowKey] ?? paths["24h"], t);
+  const smooth = Math.sin(index * 0.19) * 38 + Math.sin(t * Math.PI * 5) * 60;
+  return clamp(base + smooth, config.yMin + 250, config.yMax - 250);
+}
+
+function historyGexValue(strike, t, index, config, windowKey) {
+  const priceSpan = config.yMax - config.yMin;
+  const lowerWall = interpolatePath(
+    {
+      "24h": [[0, 58000], [0.3, 60000], [1, 60000]],
+      "3d": [[0, 56000], [0.25, 58000], [1, 60000]],
+      "7d": [[0, 60000], [0.5, 58000], [1, 60000]],
+      "30d": [[0, 60000], [0.45, 60000], [0.8, 58000], [1, 60000]],
+      "90d": [[0, 60000], [0.45, 75000], [0.7, 60000], [1, 57500]],
+    }[windowKey],
+    t,
+  );
+  const upperWall = interpolatePath(
+    {
+      "24h": [[0, 63000], [1, 63000]],
+      "3d": [[0, 60500], [0.45, 61000], [1, 63000]],
+      "7d": [[0, 61000], [0.5, 60000], [1, 63000]],
+      "30d": [[0, 65000], [0.45, 67000], [1, 61000]],
+      "90d": [[0, 75000], [0.45, 80000], [0.72, 60000], [1, 65000]],
+    }[windowKey],
+    t,
+  );
+  const redBand = -gaussian(strike, lowerWall, priceSpan * 0.018) * (Math.abs(config.scale.min) * (0.58 + 0.35 * Math.sin(t * Math.PI * 3) ** 2));
+  const orangeBand = -gaussian(strike, lowerWall - priceSpan * 0.07, priceSpan * 0.024) * Math.abs(config.scale.min) * 0.36;
+  const greenBand = gaussian(strike, upperWall, priceSpan * 0.022) * config.scale.max * (0.52 + 0.4 * Math.sin(t * Math.PI * 2.5 + 0.6) ** 2);
+  const priceMagnet = gaussian(strike, historyPrice(config, windowKey, t, index), priceSpan * 0.035) * config.scale.max * 0.32;
+  const flipDrag = -gaussian(strike, historyFlip(config, windowKey, t, index), priceSpan * 0.025) * Math.abs(config.scale.min) * 0.22;
+  const columns = Math.sin(index * 0.42) * 0.9 + Math.sin(index * 0.09) * 1.5;
+  return redBand + orangeBand + greenBand + priceMagnet + flipDrag + columns;
+}
+
+function renderHistoryHeatmapChart(svg, data) {
+  const width = 1120;
+  const height = 700;
+  const pad = { top: 22, right: 74, bottom: 112, left: 90 };
+  const chartWidth = width - pad.left - pad.right;
+  const chartHeight = height - pad.top - pad.bottom;
+  const cellWidth = chartWidth / data.columns;
+  const cellHeight = chartHeight / data.rows;
+  const yMin = data.yMin;
+  const yMax = data.yMax;
+
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.replaceChildren();
+  rect(svg, pad.left, pad.top, chartWidth, chartHeight, "#f5f1b8", 0, "history-plot-bg");
+  data.values.forEach((row, rowIndex) => {
+    row.forEach((value, colIndex) => {
+      const xPos = pad.left + colIndex * cellWidth;
+      const yPos = pad.top + (data.rows - rowIndex - 1) * cellHeight;
+      rect(svg, xPos, yPos, cellWidth + 0.6, cellHeight + 0.6, historyHeatColor(value, data.scale, data.gexType), 0, "history-cell");
+    });
+  });
+
+  data.priceTicks.forEach((tick) => {
+    const yPos = y(tick);
+    line(svg, pad.left, yPos, width - pad.right, yPos, "#ffffff", "", "history-grid-line");
+    const tickLabel = label(svg, pad.left - 12, yPos + 6, `$${price(tick)}`, "history-axis-label");
+    tickLabel.setAttribute("text-anchor", "end");
+  });
+  data.xLabels.forEach((tick, index) => {
+    const xPos = pad.left + (index / Math.max(data.xLabels.length - 1, 1)) * chartWidth;
+    const [top, bottom] = tick.split("\n");
+    label(svg, xPos - 18, height - 72, top, "history-axis-label");
+    label(svg, xPos - 18, height - 54, bottom, "history-axis-label");
+  });
+
+  const pricePoints = data.priceSeries.map((value, index) => [x(index), y(value)]);
+  const flipPoints = data.flipSeries.map((value, index) => [x(index), y(value)]);
+  drawHistoryLine(svg, pricePoints, "#111111", 6, "history-price-outline");
+  drawHistoryLine(svg, pricePoints, "#ffffff", 3.2, "history-price-line");
+  drawHistoryLine(svg, flipPoints, "#111111", 5.5, "history-flip-outline");
+  drawHistoryLine(svg, flipPoints, "#ff00ff", 3.2, "history-flip-line");
+  const lastPrice = pricePoints.at(-1);
+  const lastFlip = flipPoints.at(-1);
+  label(svg, lastPrice[0] + 4, lastPrice[1] + 5, data.symbol ?? "BTC", "history-line-label", "#ffffff");
+  label(svg, lastFlip[0] + 4, lastFlip[1] + 5, "F", "history-flip-label", "#ff00ff");
+  const yAxisTitle = label(svg, 24, pad.top + chartHeight / 2 + 44, "Strike Price", "history-axis-title");
+  yAxisTitle.setAttribute("transform", `rotate(-90 24 ${pad.top + chartHeight / 2 + 44})`);
+  label(svg, width / 2 - 132, pad.top + chartHeight / 2 + 44, "GammaFlip.io", "history-watermark");
+  renderHistoryLegend(svg, data, width, height);
+
+  function x(index) {
+    return pad.left + (index / Math.max(data.columns - 1, 1)) * chartWidth;
+  }
+
+  function y(value) {
+    return pad.top + (1 - (value - yMin) / (yMax - yMin)) * chartHeight;
+  }
+}
+
+function renderHistoryLegend(svg, data, width, height) {
+  const x0 = 320;
+  const y0 = height - 42;
+  const legendWidth = 660;
+  const steps = 90;
+  for (let index = 0; index < steps; index += 1) {
+    const t = index / (steps - 1);
+    const value = data.scale.min + t * (data.scale.max - data.scale.min);
+    rect(svg, x0 + t * legendWidth, y0, legendWidth / steps + 1, 18, historyHeatColor(value, data.scale, data.gexType), 0, "history-legend-cell");
+  }
+  data.scale.ticks.forEach((tick) => {
+    const xPos = x0 + ((tick - data.scale.min) / (data.scale.max - data.scale.min || 1)) * legendWidth;
+    line(svg, xPos, y0 + 18, xPos, y0 + 24, "#c9ced6", "", "history-legend-tick");
+    label(svg, xPos - 8, y0 + 40, String(tick), "history-axis-label");
+  });
+  label(svg, x0 + legendWidth / 2 - 46, y0 + 62, `${data.gexType === "abs" ? "Abs" : "Net"} GEX ($M)`, "history-legend-title");
+}
+
+function drawHistoryLine(svg, points, stroke, width, className) {
+  path(svg, points.map(([xPos, yPos], index) => `${index === 0 ? "M" : "L"} ${xPos} ${yPos}`).join(" "), "none", stroke, width, className);
+}
+
+function historyHeatColor(value, scale, gexType) {
+  if (gexType === "abs") {
+    const t = clamp(value / Math.max(scale.max, 1), 0, 1);
+    return rgb(mix([247, 244, 185], [110, 58, 190], t));
+  }
+  if (value < 0) {
+    const t = clamp(Math.abs(value / Math.min(scale.min, -1)), 0, 1);
+    if (t < 0.48) return rgb(mix([248, 244, 184], [255, 167, 83], t / 0.48));
+    return rgb(mix([255, 112, 64], [191, 0, 43], (t - 0.48) / 0.52));
+  }
+  const t = clamp(value / Math.max(scale.max, 1), 0, 1);
+  if (t < 0.45) return rgb(mix([248, 246, 184], [189, 225, 113], t / 0.45));
+  return rgb(mix([146, 206, 94], [0, 107, 63], (t - 0.45) / 0.55));
+}
+
+function interpolatePath(points, t) {
+  for (let index = 1; index < points.length; index += 1) {
+    const prev = points[index - 1];
+    const next = points[index];
+    if (t <= next[0]) {
+      const local = (t - prev[0]) / Math.max(next[0] - prev[0], 0.0001);
+      return prev[1] + (next[1] - prev[1]) * local;
+    }
+  }
+  return points.at(-1)[1];
+}
+
+function gaussian(value, center, width) {
+  const z = (value - center) / Math.max(width, 1);
+  return Math.exp(-0.5 * z * z);
 }
 
 function expiryBuckets() {
@@ -1252,7 +1608,7 @@ function renderHealth() {
 }
 
 function renderLiveState() {
-  els.refreshButton.textContent = state.live ? "50s" : "Paused";
+  els.refreshButton.textContent = state.category === "history" ? "↻" : state.live ? "50s" : "Paused";
   const point = state.dashboard?.trends?.points?.[state.timeIndex];
   if (point) {
     els.dataTimestamp.textContent = `${formatTimestamp(state.dashboard.asOf)} · ${point.time}`;
@@ -1597,6 +1953,7 @@ function label(svg, x, y, text, className, fill = "") {
   if (fill) node.setAttribute("fill", fill);
   node.textContent = text;
   svg.append(node);
+  return node;
 }
 
 function markerLabel(svg, x, y, text, color, inverse = false) {
