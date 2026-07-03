@@ -867,6 +867,113 @@ body[data-page="studio"] .active-page[data-category-mode="history"] .studio-char
   background: #0b0f15;
 }
 
+body[data-page="studio"] .active-page[data-category-mode="forecast"] .studio-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body[data-page="studio"] .active-page[data-category-mode="forecast"] .summary-rail,
+body[data-page="studio"] .active-page[data-category-mode="forecast"] .marker-strip,
+body[data-page="studio"] .active-page[data-category-mode="forecast"] .zoom-panel,
+body[data-page="studio"] .active-page[data-category-mode="forecast"] .studio-category-details {
+  display: none;
+}
+
+body[data-page="studio"] .active-page[data-category-mode="forecast"] .chart-panel {
+  overflow: hidden;
+  border-color: #233140;
+  border-radius: 18px;
+  background: #171c25;
+}
+
+body[data-page="studio"] .active-page[data-category-mode="forecast"] .panel-header {
+  padding: 0.7rem 0.9rem 0;
+  border-bottom: 0;
+  background: transparent;
+}
+
+body[data-page="studio"] .active-page[data-category-mode="forecast"] .panel-header h1,
+body[data-page="studio"] .active-page[data-category-mode="forecast"] .panel-header p {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+body[data-page="studio"] .active-page[data-category-mode="forecast"] .studio-chart {
+  min-height: 540px;
+  max-height: none;
+  padding: 0.65rem 0.65rem 0;
+  background: #171c25;
+}
+
+.forecast-copy {
+  display: grid;
+  gap: 0.65rem;
+  padding: 1.25rem 2rem 1.6rem;
+  border-top: 1px solid #233140;
+  background: #171c25;
+}
+
+.forecast-copy[hidden] {
+  display: none;
+}
+
+.forecast-eyebrow {
+  color: #8097ff;
+  font-size: 0.86rem;
+  font-weight: 900;
+  letter-spacing: 0.13em;
+}
+
+.forecast-copy h2 {
+  margin: 0;
+  color: #ffffff;
+  font-size: clamp(1.65rem, 2.2vw, 2.25rem);
+  line-height: 1.05;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.forecast-copy p {
+  max-width: 48rem;
+  margin: 0;
+  color: #c2cedd;
+  font-size: 1.22rem;
+  line-height: 1.55;
+}
+
+.forecast-copy ul {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.forecast-copy li {
+  color: #d5dce8;
+  font-size: 1.08rem;
+}
+
+.forecast-copy li::before {
+  margin-right: 0.65rem;
+  color: #8aa0ff;
+  content: "->";
+  font-weight: 900;
+}
+
+.forecast-copy button {
+  justify-self: start;
+  margin-top: 0.55rem;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: #8097ff;
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
 .tm-controls select,
 .tm-controls input[type="date"] {
   min-width: 0;
@@ -1233,6 +1340,114 @@ body[data-page="studio"] .zoom-panel {
 
 .history-legend-tick {
   stroke-width: 1.3;
+}
+
+.forecast-bg,
+.forecast-plot-bg,
+.forecast-density-bg {
+  stroke: #202b37;
+  stroke-width: 1;
+}
+
+.forecast-negative-zone {
+  stroke: transparent;
+}
+
+.forecast-grid-line {
+  stroke-width: 1;
+}
+
+.forecast-grid-line.vertical {
+  opacity: 0.52;
+}
+
+.forecast-path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.forecast-spot-line {
+  stroke-width: 1.4;
+  opacity: 0.72;
+}
+
+.forecast-flip-line {
+  stroke-width: 1.5;
+  opacity: 0.9;
+}
+
+.forecast-hover-line {
+  stroke-width: 1;
+  opacity: 0.72;
+}
+
+.forecast-start-halo {
+  opacity: 0.32;
+}
+
+.forecast-density-curve {
+  stroke-linejoin: round;
+}
+
+.forecast-percentile-label,
+.forecast-percentile-value,
+.forecast-telemetry,
+.forecast-prompt-label,
+.forecast-play-icon {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.forecast-axis-label {
+  fill: #aeb8c7;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.forecast-axis-title {
+  fill: #d1d7df;
+  font-size: 14px;
+  font-weight: 800;
+  transform: rotate(-90deg);
+  transform-origin: 18px 274px;
+}
+
+.forecast-telemetry {
+  fill: #bfd1ff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.forecast-telemetry-box,
+.forecast-prompt {
+  stroke: #202b37;
+  stroke-width: 1;
+}
+
+.forecast-prompt-label {
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.forecast-play-circle {
+  stroke: #7992ff;
+  stroke-width: 1.5;
+}
+
+.forecast-play-icon {
+  font-size: 9px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.forecast-percentile-label {
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.forecast-percentile-value {
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .zoom-panel {

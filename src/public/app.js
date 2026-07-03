@@ -15,6 +15,7 @@ const state = {
   layers: { positive: true, negative: true, absolute: true, regime: true },
   selectedMarkerId: "",
   crosshair: null,
+  forecastHoverPrice: null,
   panOffset: 0,
   termView: "chart",
   timeIndex: 23,
@@ -28,6 +29,8 @@ const state = {
     ["Risk reminder", "GEX is a positioning estimate. Validate with liquidity, funding, volatility, and event context."],
   ],
 };
+
+let forecastCache = null;
 
 const els = {
   productLabel: document.querySelector("#productLabel"),
@@ -85,6 +88,7 @@ const els = {
   studioCategoryDetails: document.querySelector("#studioCategoryDetails"),
   studioSnapshotMeta: document.querySelector("#studioSnapshotMeta"),
   studioStrikeChart: document.querySelector("#studioStrikeChart"),
+  forecastCopy: document.querySelector("#forecastCopy"),
   summaryRail: document.querySelector("#summaryRail"),
   layerChips: document.querySelector("#layerChips"),
   markerChips: document.querySelector("#markerChips"),
@@ -262,6 +266,13 @@ function bindEvents() {
     els.reachStatus.textContent = "Press Compute";
     toggleHidden(els.reachPanel);
   });
+  els.forecastCopy.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-action='open-monte-carlo']");
+    if (!button) return;
+    els.reachRows.hidden = true;
+    els.reachStatus.textContent = "Press Compute";
+    openModal(els.reachPanel);
+  });
   els.reachComputeButton.addEventListener("click", () => {
     renderReachPanel();
     els.reachRows.hidden = false;
@@ -309,13 +320,18 @@ function bindStudioChartInteractions() {
   let dragStart = null;
 
   els.studioStrikeChart.addEventListener("pointerdown", (event) => {
-    if (["expiry", "history"].includes(state.category)) return;
+    if (["expiry", "history", "forecast"].includes(state.category)) return;
     dragStart = { x: event.clientX, panOffset: state.panOffset };
     els.studioStrikeChart.setPointerCapture?.(event.pointerId);
     els.studioStrikeChart.classList.add("is-dragging");
   });
 
   els.studioStrikeChart.addEventListener("pointermove", (event) => {
+    if (state.category === "forecast") {
+      state.forecastHoverPrice = forecastPriceFromPointer(event);
+      renderStudioMainChart();
+      return;
+    }
     if (["expiry", "history"].includes(state.category)) return;
     const strike = strikeFromPointer(event);
     if (strike) state.crosshair = strike;
@@ -333,6 +349,11 @@ function bindStudioChartInteractions() {
   });
 
   els.studioStrikeChart.addEventListener("pointerleave", () => {
+    if (state.category === "forecast") {
+      state.forecastHoverPrice = null;
+      renderStudioMainChart();
+      return;
+    }
     if (["expiry", "history"].includes(state.category)) return;
     if (!dragStart) {
       state.crosshair = null;
@@ -344,7 +365,7 @@ function bindStudioChartInteractions() {
     "wheel",
     (event) => {
       event.preventDefault();
-      if (["expiry", "history"].includes(state.category)) return;
+      if (["expiry", "history", "forecast"].includes(state.category)) return;
       const step = event.deltaY < 0 ? -2 : 2;
       state.zoom = clamp(state.zoom + step, Number(els.zoomSlider.min), Number(els.zoomSlider.max));
       els.zoomSlider.value = String(state.zoom);
@@ -491,7 +512,7 @@ function renderStudio() {
   renderStudioModeSummary();
   renderStudioCategoryDetails();
   const selected = selectedMarker();
-  const markerText = selected && !["expiry", "history"].includes(state.category) ? ` | ${shortLevel(selected.id)} ${price(selected.strike)}` : "";
+  const markerText = selected && !["expiry", "history", "forecast"].includes(state.category) ? ` | ${shortLevel(selected.id)} ${price(selected.strike)}` : "";
   const chartName = studioChartName();
   const splitText = state.category === "expiry" && state.expiryMetric === "gexUd" ? ` | Split at $${price(state.studio.spotPrice)}` : "";
   if (state.category === "history") {
@@ -501,6 +522,7 @@ function renderStudio() {
     els.studioSnapshotMeta.textContent = `${state.studio.symbol}: ${chartName} | ${state.expiry || "All expiries"} | ${formatTimestamp(state.studio.asOf)} | ${state.live ? "Live" : "Snapshot"}${splitText}${markerText}`;
   }
   renderStudioMainChart();
+  renderForecastCopy();
   renderSummaryRail();
   renderLayerChips();
   renderMarkerChips(state.studio.markers.keyLevels);
@@ -511,7 +533,7 @@ function renderStudioTitle() {
     now: `${state.symbol}: GEX by Strike`,
     expiry: `${state.symbol}: ${studioChartName()}`,
     history: `${state.symbol}: GEX Heatmap`,
-    forecast: `${state.symbol}: GEX Forecast`,
+    forecast: `${state.symbol}: Monte Carlo Forecast`,
   };
   els.studioTitle.textContent = titles[state.category];
 }
@@ -519,13 +541,14 @@ function renderStudioTitle() {
 function renderStudioControls() {
   const isExpiry = state.category === "expiry";
   const isHistory = state.category === "history";
-  els.modeTabs.hidden = isExpiry || isHistory;
+  const isForecast = state.category === "forecast";
+  els.modeTabs.hidden = isExpiry || isHistory || isForecast;
   els.expiryViewTabs.hidden = !isExpiry;
   els.expiryMetricTabs.hidden = !(isExpiry && state.expiryView === "positioning");
   els.historyWindowTabs.hidden = !isHistory;
   els.historyGexTabs.hidden = !isHistory;
-  els.reachButton.hidden = isExpiry || isHistory;
-  els.chartControlsButton.hidden = isExpiry ? true : false;
+  els.reachButton.hidden = isExpiry || isHistory || isForecast;
+  els.chartControlsButton.hidden = isExpiry || isForecast;
   setActiveByDataset(els.expiryViewTabs, "expiryView", state.expiryView);
   setActiveByDataset(els.expiryMetricTabs, "expiryMetric", state.expiryMetric);
   setActiveByDataset(els.historyWindowTabs, "historyWindow", state.historyWindow);
@@ -549,6 +572,7 @@ function renderStudioControls() {
 
 function studioChartName() {
   if (state.category === "history") return "GEX Heatmap";
+  if (state.category === "forecast") return "Monte Carlo to Expiry";
   if (state.category !== "expiry") return "GEX by Strike";
   if (state.expiryView === "levels") return "GEX Term Structure";
   return {
@@ -563,6 +587,11 @@ function studioChartName() {
 }
 
 function renderStudioMainChart() {
+  if (state.category === "forecast") {
+    renderForecastMonteCarloChart(els.studioStrikeChart, monteCarloForecastData(state.forecastHoverPrice));
+    return;
+  }
+
   if (state.category === "history") {
     renderHistoryHeatmapChart(els.studioStrikeChart, historyHeatmapData(state.historyWindow, state.historyGexType));
     return;
@@ -588,6 +617,25 @@ function renderStudioMainChart() {
     crosshair: state.crosshair,
     watermarked: true,
   });
+}
+
+function renderForecastCopy() {
+  const isForecast = state.category === "forecast";
+  els.forecastCopy.hidden = !isForecast;
+  if (!isForecast) {
+    els.forecastCopy.replaceChildren();
+    return;
+  }
+  els.forecastCopy.innerHTML = `
+    <div class="forecast-eyebrow">MONTE CARLO · TO EXPIRY</div>
+    <h2>Where does price land?</h2>
+    <p>20,000 GEX-warped paths to your chosen expiry - positive gamma compresses moves, negative amplifies them.</p>
+    <ul>
+      <li>Hover any price for the exact odds at expiry</li>
+      <li>p10 / p50 / p90 + sigma + skew on every run</li>
+    </ul>
+    <button type="button" data-action="open-monte-carlo">Open Monte Carlo -></button>
+  `;
 }
 
 function renderStudioModeSummary() {
@@ -884,6 +932,237 @@ function renderTermChart(svg, rows) {
     const usable = height - pad.top - pad.bottom;
     return pad.top + ((maxAbs - value) / (maxAbs * 2 || 1)) * usable;
   }
+}
+
+function monteCarloForecastData(hoverPrice = null) {
+  if (!forecastCache) {
+    const startPrice = 77134;
+    const flipPrice = 76600;
+    const iv = 0.333;
+    const dte = 7.8;
+    const steps = 56;
+    const visiblePathCount = 180;
+    const distributionCount = 20000;
+    const yMin = 62000;
+    const yMax = 88000;
+    const terminalDistribution = Array.from({ length: distributionCount }, (_, index) =>
+      forecastTerminal(startPrice, flipPrice, iv, dte, steps, index + 1000),
+    );
+    terminalDistribution.sort((a, b) => a - b);
+    forecastCache = {
+      startPrice,
+      flipPrice,
+      iv,
+      dte,
+      steps,
+      yMin,
+      yMax,
+      paths: Array.from({ length: visiblePathCount }, (_, index) => forecastPath(startPrice, flipPrice, iv, dte, steps, index + 7)),
+      terminalDistribution,
+      p10: percentile(terminalDistribution, 0.1),
+      p50: percentile(terminalDistribution, 0.5),
+      p90: percentile(terminalDistribution, 0.9),
+      sigma: stddev(terminalDistribution),
+    };
+  }
+
+  const hover = clamp(hoverPrice ?? 74800, forecastCache.yMin + 600, forecastCache.yMax - 600);
+  const chance = cumulativeProbability(forecastCache.terminalDistribution, hover);
+  return {
+    ...forecastCache,
+    hover,
+    chance,
+  };
+}
+
+function forecastPath(startPrice, flipPrice, iv, dte, steps, seed) {
+  let priceValue = startPrice;
+  let random = seededRandom(seed);
+  const dt = dte / 365 / steps;
+  const values = [priceValue];
+  for (let step = 1; step <= steps; step += 1) {
+    const z = normalFromRandom(random);
+    const distanceToFlip = (priceValue - flipPrice) / startPrice;
+    const gammaWarp = distanceToFlip >= 0 ? 0.74 : 1.28;
+    const drift = distanceToFlip >= 0 ? 0.00055 : -0.00085;
+    const pullToFlip = -distanceToFlip * 0.012;
+    const shock = iv * Math.sqrt(dt) * z * gammaWarp;
+    priceValue *= Math.exp(drift + pullToFlip + shock);
+    priceValue = clamp(priceValue, 60000, 89500);
+    values.push(priceValue);
+  }
+  return values;
+}
+
+function forecastTerminal(startPrice, flipPrice, iv, dte, steps, seed) {
+  return forecastPath(startPrice, flipPrice, iv, dte, steps, seed).at(-1);
+}
+
+function renderForecastMonteCarloChart(svg, data) {
+  const width = 1120;
+  const height = 620;
+  const pad = { top: 24, right: 24, bottom: 54, left: 64 };
+  const plotRight = 895;
+  const densityLeft = 930;
+  const densityRight = 1084;
+  const chartBottom = height - pad.bottom;
+  const yTicks = [65000, 70000, 75000, 80000, 85000];
+  const dateTicks = ["May 22", "May 23", "May 24", "May 25", "May 26", "May 27", "May 28", "May 29"];
+
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.replaceChildren();
+  rect(svg, 0, 0, width, height, "#07100f", 0, "forecast-bg");
+  rect(svg, pad.left, pad.top, plotRight - pad.left, chartBottom - pad.top, "#07100f", 0, "forecast-plot-bg");
+  rect(svg, densityLeft, pad.top, densityRight - densityLeft, chartBottom - pad.top, "#0a1217", 0, "forecast-density-bg");
+  rect(svg, pad.left, y(data.flipPrice), plotRight - pad.left, chartBottom - y(data.flipPrice), "rgba(146, 104, 29, 0.28)", 0, "forecast-negative-zone");
+
+  yTicks.forEach((tick) => {
+    const yPos = y(tick);
+    line(svg, pad.left, yPos, densityRight, yPos, "#22302e", "", "forecast-grid-line");
+    const tickLabel = label(svg, pad.left - 12, yPos + 5, `${Math.round(tick / 1000)}k`, "forecast-axis-label");
+    tickLabel.setAttribute("text-anchor", "end");
+  });
+  dateTicks.forEach((tick, index) => {
+    const xPos = pad.left + (index / (dateTicks.length - 1)) * (plotRight - pad.left);
+    line(svg, xPos, pad.top, xPos, chartBottom, "#1a2624", "", "forecast-grid-line vertical");
+    label(svg, xPos - 16, height - 20, tick, "forecast-axis-label");
+  });
+
+  data.paths.forEach((values, index) => {
+    const terminal = values.at(-1);
+    const stroke = terminal >= data.startPrice ? "rgba(59, 178, 103, 0.42)" : "rgba(215, 94, 49, 0.42)";
+    const strokeWidth = index % 17 === 0 ? 1.35 : 0.85;
+    drawForecastPath(svg, values, stroke, strokeWidth, "forecast-path");
+  });
+
+  line(svg, pad.left, y(data.startPrice), plotRight, y(data.startPrice), "#d7dce7", "", "forecast-spot-line");
+  line(svg, pad.left, y(data.flipPrice), plotRight, y(data.flipPrice), "#ff00ff", "3 4", "forecast-flip-line");
+  line(svg, pad.left, y(data.hover), plotRight, y(data.hover), "#f2cc6b", "", "forecast-hover-line");
+  circle(svg, pad.left, y(data.startPrice), 8, "#e7eef6", "forecast-start-halo");
+  circle(svg, pad.left, y(data.startPrice), 4, "#e7eef6", "forecast-start-dot");
+  markerLabel(svg, pad.left + 54, y(data.startPrice) - 8, `BTC - $${price(data.startPrice)}`, "#1c2631", false);
+  markerLabel(svg, plotRight - 170, y(data.flipPrice) - 12, `Flip - $${formatK(data.flipPrice)}`, "#2a1535", false);
+  markerLabel(svg, plotRight - 80, y(data.hover) - 2, `$${formatK(data.hover)} - May 29`, "#101820", false);
+
+  renderTerminalDensity(svg, data, densityLeft, densityRight, pad.top, chartBottom);
+  renderForecastTelemetry(svg, data, pad.left + 10, pad.top + 10);
+  renderForecastPrompt(svg, pad.left - 32, chartBottom - 46);
+  label(svg, 18, pad.top + 250, "Price", "forecast-axis-title");
+  label(svg, densityLeft + 30, chartBottom + 36, "Terminal density", "forecast-axis-label");
+
+  function x(index) {
+    return pad.left + (index / data.steps) * (plotRight - pad.left);
+  }
+
+  function y(value) {
+    return pad.top + (1 - (value - data.yMin) / (data.yMax - data.yMin)) * (chartBottom - pad.top);
+  }
+
+  function drawForecastPath(target, values, stroke, strokeWidth, className) {
+    const d = values.map((value, index) => `${index === 0 ? "M" : "L"} ${x(index)} ${y(value)}`).join(" ");
+    path(target, d, "none", stroke, strokeWidth, className);
+  }
+
+  function densityY(value) {
+    return y(value);
+  }
+
+  function densityX(density) {
+    return densityRight - density * (densityRight - densityLeft - 28);
+  }
+
+  function renderTerminalDensity(target, forecast, left, right, top, bottom) {
+    const bins = 80;
+    const counts = Array.from({ length: bins }, () => 0);
+    forecast.terminalDistribution.forEach((value) => {
+      const index = clamp(Math.floor(((value - forecast.yMin) / (forecast.yMax - forecast.yMin)) * bins), 0, bins - 1);
+      counts[index] += 1;
+    });
+    const max = Math.max(...counts, 1);
+    const points = counts.map((count, index) => {
+      const priceLevel = forecast.yMin + (index / (bins - 1)) * (forecast.yMax - forecast.yMin);
+      return [densityX(count / max), densityY(priceLevel)];
+    });
+    const densityPath = [`M ${right} ${bottom}`, ...points.map(([xPos, yPos]) => `L ${xPos} ${yPos}`), `L ${right} ${top}`, "Z"].join(" ");
+    path(target, densityPath, "rgba(66, 118, 190, 0.28)", "#5b8ee6", 2, "forecast-density-curve");
+    [
+      ["p90", forecast.p90, "#63ce83"],
+      ["p50", forecast.p50, "#d9e1f5"],
+      ["p10", forecast.p10, "#ff5d50"],
+    ].forEach(([name, value, color]) => {
+      const yPos = densityY(value);
+      circle(target, densityX(0.55), yPos, 3.5, color, "forecast-percentile-dot");
+      label(target, densityX(0.55) + 12, yPos - 8, name, "forecast-percentile-label", color);
+      label(target, densityX(0.55) + 12, yPos + 9, `$${formatK(value)}`, "forecast-percentile-value", color);
+    });
+    markerLabel(target, left + 52, densityY(forecast.hover), `Chance: ${(forecast.chance * 100).toFixed(1)}%`, "#101820", false);
+    const stats = label(target, left + 8, top + 18, `sigma $${price(Math.round(forecast.sigma))}`, "forecast-telemetry");
+    stats.setAttribute("fill", "#bfd1ff");
+    const skew = label(target, left + 8, top + 36, "Skew -0.53", "forecast-telemetry");
+    skew.setAttribute("fill", "#bfd1ff");
+  }
+}
+
+function renderForecastTelemetry(svg, data, x, y) {
+  rect(svg, x, y, 248, 58, "rgba(13, 19, 31, 0.86)", 0, "forecast-telemetry-box");
+  [
+    `BTC - $${price(data.startPrice)} - IV ${(data.iv * 100).toFixed(1)}%`,
+    `DTE ${data.dte.toFixed(1)}d - May 29 09:00 (UTC+1)`,
+    `Step 1h - 20,000 paths`,
+  ].forEach((text, index) => label(svg, x + 8, y + 16 + index * 15, text, "forecast-telemetry"));
+}
+
+function renderForecastPrompt(svg, x, y) {
+  rect(svg, x, y - 22, 360, 44, "rgba(18, 25, 42, 0.92)", 20, "forecast-prompt");
+  circle(svg, x + 27, y, 11, "#18233d", "forecast-play-circle");
+  label(svg, x + 17, y + 5, "play", "forecast-play-icon", "#89a2ff");
+  label(svg, x + 54, y + 7, "Hover any level -> odds", "forecast-prompt-label", "#f2f5ff");
+}
+
+function forecastPriceFromPointer(event) {
+  const rectBox = els.studioStrikeChart.getBoundingClientRect();
+  const data = monteCarloForecastData();
+  const padTop = 24;
+  const chartBottom = 620 - 54;
+  const ratio = clamp((event.clientY - rectBox.top) / Math.max(rectBox.height, 1), padTop / 620, chartBottom / 620);
+  const local = (ratio * 620 - padTop) / (chartBottom - padTop);
+  return data.yMax - local * (data.yMax - data.yMin);
+}
+
+function seededRandom(seed) {
+  let value = seed % 2147483647;
+  if (value <= 0) value += 2147483646;
+  return () => {
+    value = (value * 16807) % 2147483647;
+    return (value - 1) / 2147483646;
+  };
+}
+
+function normalFromRandom(random) {
+  const u = Math.max(random(), 1e-6);
+  const v = Math.max(random(), 1e-6);
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+function percentile(values, p) {
+  return values[Math.floor(clamp(p, 0, 1) * (values.length - 1))];
+}
+
+function cumulativeProbability(sortedValues, threshold) {
+  let low = 0;
+  let high = sortedValues.length;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (sortedValues[mid] <= threshold) low = mid + 1;
+    else high = mid;
+  }
+  return low / Math.max(sortedValues.length, 1);
+}
+
+function stddev(values) {
+  const mean = values.reduce((sum, value) => sum + value, 0) / Math.max(values.length, 1);
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / Math.max(values.length, 1);
+  return Math.sqrt(variance);
 }
 
 function historyHeatmapData(windowKey, gexType) {
@@ -2007,6 +2286,10 @@ function money(value) {
 function price(value) {
   if (Math.abs(value) >= 1000) return formatters.integer.format(value);
   return formatters.price.format(value);
+}
+
+function formatK(value) {
+  return `${(value / 1000).toFixed(value >= 100000 ? 0 : 1)}k`;
 }
 
 function formatStrike(value) {

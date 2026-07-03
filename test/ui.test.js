@@ -4,6 +4,7 @@ import test from "node:test";
 
 const html = await readFile(new URL("../src/public/index.html", import.meta.url), "utf8");
 const app = await readFile(new URL("../src/public/app.js", import.meta.url), "utf8");
+const renderedSurface = `${html}\n${app}`;
 
 test("V2 shell exposes GammaFlip-style advanced studio controls", () => {
   [
@@ -24,6 +25,7 @@ test("V2 shell exposes GammaFlip-style advanced studio controls", () => {
     'id="showRegimeToggle"',
     'id="studioModeSummary"',
     'id="studioCategoryDetails"',
+    'id="forecastCopy"',
     'id="layerChips"',
     'id="expiryViewTabs"',
     'id="expiryMetricTabs"',
@@ -39,7 +41,7 @@ test("V2 shell exposes GammaFlip-style advanced studio controls", () => {
     'id="menuPanel"',
     'id="helpDrawer"',
   ].forEach((needle) => {
-    assert.match(html, new RegExp(escapeRegExp(needle)));
+    assert.match(renderedSurface, new RegExp(escapeRegExp(needle)));
   });
 });
 
@@ -68,6 +70,13 @@ test("Studio chart supports GammaFlip-style chart interactions", () => {
     "GEX Heatmap",
     "GEX ($M)",
     "data.gexType === \"abs\"",
+    "renderForecastMonteCarloChart",
+    "monteCarloForecastData",
+    "forecastCache",
+    "cumulativeProbability",
+    "forecastPriceFromPointer",
+    "forecast-path",
+    "Terminal density",
   ].forEach((needle) => {
     assert.match(app, new RegExp(escapeRegExp(needle)));
   });
@@ -80,12 +89,15 @@ test("V2 shell mirrors observed GammaFlip picker and reach vocabulary", () => {
     "Settles 08:00 UTC",
     "Hold <kbd>Alt</kbd> to see the chart",
     "Monte Carlo",
+    "Where does price land?",
+    "20,000 GEX-warped paths",
+    "Open Monte Carlo ->",
     "Horizon — how far ahead",
     "GEX impact — how strongly gamma pins or amplifies moves",
     "Direction — which side to measure",
     "▶ Compute",
   ].forEach((needle) => {
-    assert.match(html, new RegExp(escapeRegExp(needle)));
+    assert.match(renderedSurface, new RegExp(escapeRegExp(needle)));
   });
 });
 
