@@ -4,6 +4,9 @@ const state = {
   expiry: "",
   mode: "snapshot",
   category: "now",
+  expiryView: "levels",
+  expiryMetric: "oi",
+  maxDte: 20,
   coverage: 50,
   zoom: 16,
   live: true,
@@ -55,6 +58,8 @@ const els = {
   changeTable: document.querySelector("#changeTable"),
   categoryTabs: document.querySelector("#categoryTabs"),
   modeTabs: document.querySelector("#modeTabs"),
+  expiryViewTabs: document.querySelector("#expiryViewTabs"),
+  expiryMetricTabs: document.querySelector("#expiryMetricTabs"),
   reachButton: document.querySelector("#reachButton"),
   reachPanel: document.querySelector("#reachPanel"),
   reachRows: document.querySelector("#reachRows"),
@@ -81,6 +86,7 @@ const els = {
   markerChips: document.querySelector("#markerChips"),
   zoomSlider: document.querySelector("#zoomSlider"),
   zoomValue: document.querySelector("#zoomValue"),
+  expiryDteTicks: document.querySelector("#expiryDteTicks"),
   strikesChart: document.querySelector("#strikesChart"),
   termChart: document.querySelector("#termChart"),
   termViewToggle: document.querySelector("#termViewToggle"),
@@ -199,6 +205,22 @@ function bindEvents() {
     renderStudio();
   });
 
+  els.expiryViewTabs.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-expiry-view]");
+    if (!button) return;
+    state.expiryView = button.dataset.expiryView;
+    setActiveButton(els.expiryViewTabs, button);
+    renderStudio();
+  });
+
+  els.expiryMetricTabs.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-expiry-metric]");
+    if (!button) return;
+    state.expiryMetric = button.dataset.expiryMetric;
+    setActiveButton(els.expiryMetricTabs, button);
+    renderStudio();
+  });
+
   els.coverageTabs.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-coverage]");
     if (!button) return;
@@ -230,8 +252,13 @@ function bindEvents() {
   bindStudioChartInteractions();
 
   els.zoomSlider.addEventListener("input", (event) => {
-    state.zoom = Number(event.target.value);
-    els.zoomValue.textContent = `${state.zoom}%`;
+    if (state.category === "expiry") {
+      state.maxDte = Number(event.target.value);
+      els.zoomValue.textContent = `<= ${state.maxDte}d`;
+    } else {
+      state.zoom = Number(event.target.value);
+      els.zoomValue.textContent = `${state.zoom}%`;
+    }
     renderStudio();
   });
 
@@ -294,6 +321,7 @@ function bindStudioChartInteractions() {
     "wheel",
     (event) => {
       event.preventDefault();
+      if (state.category === "expiry") return;
       const step = event.deltaY < 0 ? -2 : 2;
       state.zoom = clamp(state.zoom + step, Number(els.zoomSlider.min), Number(els.zoomSlider.max));
       els.zoomSlider.value = String(state.zoom);
@@ -431,13 +459,17 @@ function renderDashboard() {
 
 function renderStudio() {
   document.querySelector("#studioPage").dataset.categoryMode = state.category;
+  document.querySelector("#studioPage").dataset.expiryView = state.expiryView;
+  document.querySelector("#studioPage").dataset.expiryMetric = state.expiryMetric;
+  renderStudioControls();
   renderStudioTitle();
   renderStudioModeSummary();
   renderStudioCategoryDetails();
   const selected = selectedMarker();
   const markerText = selected ? ` | ${shortLevel(selected.id)} ${price(selected.strike)}` : "";
-  const chartName = state.category === "expiry" ? "GEX Term Structure" : "GEX by Strike";
-  els.studioSnapshotMeta.textContent = `${state.studio.symbol}: ${chartName} | ${state.expiry || "All expiries"} | ${formatTimestamp(state.studio.asOf)} | ${state.live ? "Live" : "Snapshot"}${markerText}`;
+  const chartName = studioChartName();
+  const splitText = state.category === "expiry" && state.expiryMetric === "gexUd" ? ` | Split at $${price(state.studio.spotPrice)}` : "";
+  els.studioSnapshotMeta.textContent = `${state.studio.symbol}: ${chartName} | ${state.expiry || "All expiries"} | ${formatTimestamp(state.studio.asOf)} | ${state.live ? "Live" : "Snapshot"}${splitText}${markerText}`;
   renderStudioMainChart();
   renderSummaryRail();
   renderLayerChips();
@@ -447,21 +479,60 @@ function renderStudio() {
 function renderStudioTitle() {
   const titles = {
     now: `${state.symbol}: GEX by Strike`,
-    expiry: `${state.symbol}: GEX Term Structure`,
+    expiry: `${state.symbol}: ${studioChartName()}`,
     history: `${state.symbol}: GEX History Replay`,
     forecast: `${state.symbol}: GEX Forecast`,
   };
   els.studioTitle.textContent = titles[state.category];
 }
 
+function renderStudioControls() {
+  const isExpiry = state.category === "expiry";
+  els.modeTabs.hidden = isExpiry;
+  els.expiryViewTabs.hidden = !isExpiry;
+  els.expiryMetricTabs.hidden = !(isExpiry && state.expiryView === "positioning");
+  els.reachButton.hidden = isExpiry;
+  els.chartControlsButton.hidden = isExpiry;
+  setActiveByDataset(els.expiryViewTabs, "expiryView", state.expiryView);
+  setActiveByDataset(els.expiryMetricTabs, "expiryMetric", state.expiryMetric);
+  if (isExpiry) {
+    els.zoomSlider.min = "-1";
+    els.zoomSlider.max = "356";
+    els.zoomSlider.value = String(state.maxDte);
+    els.zoomValue.textContent = `<= ${state.maxDte}d`;
+    els.zoomSlider.closest(".zoom-panel").querySelector("span").textContent = "Max Expiration (DTE)";
+    els.expiryDteTicks.hidden = false;
+  } else {
+    els.zoomSlider.min = "1";
+    els.zoomSlider.max = "100";
+    els.zoomSlider.value = String(state.zoom);
+    els.zoomValue.textContent = `${state.zoom}%`;
+    els.zoomSlider.closest(".zoom-panel").querySelector("span").textContent = "Zoom (+/-%)";
+    els.expiryDteTicks.hidden = true;
+  }
+}
+
+function studioChartName() {
+  if (state.category !== "expiry") return "GEX by Strike";
+  if (state.expiryView === "levels") return "GEX Term Structure";
+  return {
+    oi: "OI by Expiration",
+    pcRatio: "P/C Ratio by Expiration",
+    gexAbs: "GEX ABS by Expiration",
+    gexNet: "GEX NET by Expiration",
+    gexCp: "GEX C/P by Expiration",
+    gexUd: "GEX U/D by Expiration",
+    rr25: "25Δ RR by Expiration",
+  }[state.expiryMetric];
+}
+
 function renderStudioMainChart() {
   if (state.category === "expiry") {
-    renderStudioTermStructureChart(els.studioStrikeChart, {
-      rows: state.studio.rows,
-      expiries: state.studio.expiries,
-      spotPrice: state.studio.spotPrice,
-      watermarked: true,
-    });
+    if (state.expiryView === "levels") {
+      renderExpiryLevelsChart(els.studioStrikeChart, expiryBuckets(), state.studio.spotPrice);
+    } else {
+      renderExpiryPositioningChart(els.studioStrikeChart, expiryBuckets(), state.expiryMetric);
+    }
     return;
   }
 
@@ -772,6 +843,285 @@ function renderTermChart(svg, rows) {
     const usable = height - pad.top - pad.bottom;
     return pad.top + ((maxAbs - value) / (maxAbs * 2 || 1)) * usable;
   }
+}
+
+function expiryBuckets() {
+  const labels = ["Σ All", "3JUL26", "4JUL26", "5JUL26", "6JUL26", "10JUL26", "17JUL26", "24JUL26"];
+  const dte = [-1, 0, 1, 2, 6, 13, 20, 27];
+  const oi = [27e9, 2.7e9, 321e6, 115e6, 76e6, 1.5e9, 949e6, 68e6];
+  const gexAbs = [426e6, 84e6, 28e6, 9.4e6, 8e6, 53e6, 31e6, 2.2e6];
+  const gexNet = [80e6, 26e6, 10e6, 3.2e6, -759e3, 15e6, 15e6, 1.7e6];
+  const pcRatio = [0.64, 0.84, 1.3, 1.08, 1.74, 0.85, 0.54, 0.14];
+  const gexCp = [0.19, 0.31, 0.37, 0.34, -0.1, 0.27, 0.48, 0.78];
+  const gexUd = [0.16, 0.12, -0.38, -0.25, -0.6, 0.07, 0.38, 0.8];
+  const rrDeribit = [7.7, -1.7, -2.7, -4, -6.7, -7.6, -7.3];
+  const rrOkx = [-3.5, -1.5, -2.5, -3.8, -6.9, -7.8, -7.2];
+  const rrBybit = [-1.1, -1.4, -2.4, -3.3, -7, -7.5, -7];
+
+  return labels.map((labelText, index) => ({
+    label: labelText,
+    dte: dte[index],
+    oi: oi[index],
+    gexAbs: gexAbs[index],
+    gexNet: gexNet[index],
+    pcRatio: pcRatio[index],
+    gexCp: gexCp[index],
+    gexUd: gexUd[index],
+    deribit: 0.82,
+    okx: 0.1,
+    bybit: 0.08,
+    rrDeribit: rrDeribit[index - 1],
+    rrOkx: rrOkx[index - 1],
+    rrBybit: rrBybit[index - 1],
+  }));
+}
+
+function renderExpiryLevelsChart(svg, buckets, spotPrice) {
+  const width = 1120;
+  const height = 640;
+  const pad = { top: 26, right: 28, bottom: 58, left: 86 };
+  const chartBottom = height - pad.bottom;
+  const labels = buckets.map((bucket) => bucket.label);
+  const upperHigh = [63000, 62000, 62000, 63000, 63000, 64000, 66000, 68000];
+  const upperLow = [62000, 61500, 61500, 62000, 62500, 63000, 64000, 66000];
+  const lowerHigh = [60000, 61000, 59000, 60000, 60500, 58000, 60000, 61000];
+  const lowerLow = [56000, 61000, 58500, 59000, 59500, 56000, 56000, 60000];
+  const yMin = 55200;
+  const yMax = 68800;
+  const xStep = (width - pad.left - pad.right) / Math.max(labels.length - 1, 1);
+
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.replaceChildren();
+  rect(svg, pad.left, pad.top, width - pad.left - pad.right, chartBottom - pad.top, "#0c1219", 0, "expiry-chart-bg");
+  drawExpiryGrid(svg, width, height, pad, [56000, 58000, 60000, 62000, 64000, 66000, 68000], yMin, yMax);
+  drawBand(upperLow, upperHigh, "#008000", "expiry-positive-band");
+  drawBand(lowerLow, lowerHigh, "#ff174d", "expiry-negative-band");
+  drawLineWithPoints(upperHigh, "#008000");
+  drawLineWithPoints(upperLow, "#008000");
+  drawLineWithPoints(lowerHigh, "#ff174d");
+  drawLineWithPoints(lowerLow, "#ff174d");
+  const spotY = y(spotPrice);
+  line(svg, pad.left, spotY, width - pad.right, spotY, "#d9e3ee", "3 4", "spot-line");
+  markerLabel(svg, pad.left - 8, spotY, `${formatStrike(spotPrice).toLowerCase()}`, "#ffffff", true);
+  labels.forEach((text, index) => label(svg, x(index) - 20, height - 18, text, "axis-label"));
+  label(svg, width / 2 - 110, height / 2 + 34, "GammaFlip.io", "watermark");
+
+  function x(index) {
+    return pad.left + index * xStep;
+  }
+
+  function y(value) {
+    return pad.top + (1 - (value - yMin) / (yMax - yMin)) * (chartBottom - pad.top);
+  }
+
+  function points(values) {
+    return values.map((value, index) => [x(index), y(value)]);
+  }
+
+  function drawBand(lowValues, highValues, color, className) {
+    const high = points(highValues);
+    const low = points(lowValues).reverse();
+    const d = [...high, ...low].map(([xPos, yPos], index) => `${index === 0 ? "M" : "L"} ${xPos} ${yPos}`).join(" ") + " Z";
+    path(svg, d, color === "#008000" ? "rgba(0, 128, 0, 0.22)" : "rgba(255, 23, 77, 0.2)", color, 2, className);
+  }
+
+  function drawLineWithPoints(values, color) {
+    const pts = points(values);
+    path(svg, pts.map(([xPos, yPos], index) => `${index === 0 ? "M" : "L"} ${xPos} ${yPos}`).join(" "), "none", color, 2);
+    pts.forEach(([xPos, yPos]) => circle(svg, xPos, yPos, 3.2, color));
+  }
+}
+
+function renderExpiryPositioningChart(svg, buckets, metric) {
+  if (metric === "rr25") {
+    renderExpiryRiskReversalChart(svg, buckets.slice(1));
+    return;
+  }
+
+  if (["pcRatio", "gexCp", "gexUd"].includes(metric)) {
+    renderExpiryRatioChart(svg, buckets, metric);
+    return;
+  }
+
+  renderExpiryStackedBarChart(svg, buckets, metric);
+}
+
+function renderExpiryStackedBarChart(svg, buckets, metric) {
+  const width = 1120;
+  const height = 640;
+  const pad = { top: 58, right: 28, bottom: 58, left: 86 };
+  const chartBottom = height - pad.bottom;
+  const values = buckets.map((bucket) => Math.abs(bucket[metric]));
+  const max = Math.max(...values) * 1.18;
+  const xStep = (width - pad.left - pad.right) / buckets.length;
+  const barWidth = Math.min(104, xStep * 0.8);
+  const colors = { deribit: "#08c38f", okx: "#42a5f5", bybit: "#ffad0a" };
+  const yTicks =
+    metric === "oi"
+      ? [0, 5e9, 10e9, 15e9, 20e9, 25e9, 30e9]
+      : metric === "gexNet"
+        ? [0, 20e6, 40e6, 60e6, 80e6, 100e6]
+        : [0, 100e6, 200e6, 300e6, 400e6, 500e6];
+
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.replaceChildren();
+  rect(svg, pad.left, pad.top, width - pad.left - pad.right, chartBottom - pad.top, "#0c1219", 0, "expiry-chart-bg");
+  drawExpiryGrid(svg, width, height, pad, yTicks, 0, Math.max(max, yTicks.at(-1)));
+  renderExchangeLegend(svg, width - 220, 28, metric === "gexNet");
+
+  const netPoints = [];
+  buckets.forEach((bucket, index) => {
+    const raw = bucket[metric];
+    const total = Math.abs(raw);
+    const xPos = pad.left + index * xStep + (xStep - barWidth) / 2;
+    let yBase = y(0);
+    [
+      ["deribit", total * bucket.deribit],
+      ["okx", total * bucket.okx],
+      ["bybit", total * bucket.bybit],
+    ].forEach(([venue, value]) => {
+      const yTop = y(value + (yValueFromPixel(yBase) || 0));
+      rect(svg, xPos, yTop, barWidth, yBase - yTop, colors[venue], 0);
+      yBase = yTop;
+    });
+    const topY = y(total);
+    const labelText = metric === "oi" ? `$${money(total)}` : money(raw);
+    label(svg, xPos + barWidth / 2 - 18, topY - 8, labelText, "expiry-value-label");
+    label(svg, xPos + barWidth / 2 - 22, height - 18, bucket.label, "axis-label");
+    netPoints.push([xPos + barWidth / 2, y(Math.max(raw, 0)), raw]);
+  });
+
+  line(svg, pad.left + xStep, pad.top, pad.left + xStep, chartBottom, "#d9e3ee", "2 4", "expiry-marker-line");
+  label(svg, 20, height / 2, metric === "oi" ? "Open Interest (USD)" : "GEX per 1% Move", "axis-title");
+
+  if (metric === "gexNet") {
+    const linePath = netPoints.map(([xPos, yPos], index) => `${index === 0 ? "M" : "L"} ${xPos} ${yPos}`).join(" ");
+    path(svg, linePath, "none", "#f2f5f9", 2, "expiry-net-line");
+    netPoints.forEach(([xPos, yPos, raw]) => {
+      diamond(svg, xPos, yPos, 6, "#ff5b6f", "#ffffff");
+      label(svg, xPos - 16, yPos + (raw < 0 ? 24 : -14), money(raw), "expiry-value-label");
+    });
+  }
+
+  function y(value) {
+    return pad.top + (1 - value / Math.max(max, yTicks.at(-1))) * (chartBottom - pad.top);
+  }
+
+  function yValueFromPixel(pixel) {
+    return (1 - (pixel - pad.top) / (chartBottom - pad.top)) * Math.max(max, yTicks.at(-1));
+  }
+}
+
+function renderExpiryRatioChart(svg, buckets, metric) {
+  const width = 1120;
+  const height = 640;
+  const pad = { top: 58, right: 28, bottom: 58, left: 86 };
+  const chartBottom = height - pad.bottom;
+  const values = buckets.map((bucket) => bucket[metric]);
+  const domain = metric === "pcRatio" ? { min: 0, max: 2.05, ticks: [0, 0.5, 1, 1.5, 2], base: 0, ref: 1 } : { min: -1, max: 1, ticks: [-1, -0.5, 0, 0.5, 1], base: 0, ref: 0 };
+  const xStep = (width - pad.left - pad.right) / buckets.length;
+  const barWidth = Math.min(104, xStep * 0.8);
+
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.replaceChildren();
+  rect(svg, pad.left, pad.top, width - pad.left - pad.right, chartBottom - pad.top, "#0c1219", 0, "expiry-chart-bg");
+  drawExpiryGrid(svg, width, height, pad, domain.ticks, domain.min, domain.max);
+  line(svg, pad.left, y(domain.ref), width - pad.right, y(domain.ref), "#d9e3ee", "8 8", "zero-line");
+  line(svg, pad.left + xStep, pad.top, pad.left + xStep, chartBottom, "#d9e3ee", "2 4", "expiry-marker-line");
+
+  values.forEach((value, index) => {
+    const xPos = pad.left + index * xStep + (xStep - barWidth) / 2;
+    const y0 = y(domain.base);
+    const y1 = y(value);
+    const color = ratioColor(value, metric);
+    rect(svg, xPos, Math.min(y0, y1), barWidth, Math.abs(y1 - y0), color, 0);
+    label(svg, xPos + barWidth / 2 - 12, y1 + (value < domain.base ? 18 : -8), value.toFixed(2), "expiry-value-label");
+    label(svg, xPos + barWidth / 2 - 22, height - 18, buckets[index].label, "axis-label");
+  });
+
+  label(svg, 20, height / 2, { pcRatio: "Put/Call Ratio", gexCp: "GEX C/P", gexUd: "GEX U/D" }[metric], "axis-title");
+
+  function y(value) {
+    return pad.top + (1 - (value - domain.min) / (domain.max - domain.min)) * (chartBottom - pad.top);
+  }
+}
+
+function renderExpiryRiskReversalChart(svg, buckets) {
+  const width = 1120;
+  const height = 640;
+  const pad = { top: 58, right: 28, bottom: 58, left: 86 };
+  const chartBottom = height - pad.bottom;
+  const domain = { min: -9.5, max: 9.2, ticks: [-8, -6, -4, -2, 0, 2, 4, 6, 8] };
+  const xStep = (width - pad.left - pad.right) / Math.max(buckets.length - 1, 1);
+  const series = [
+    ["Deribit", "rrDeribit", "#08c38f"],
+    ["Okx", "rrOkx", "#42a5f5"],
+    ["Bybit", "rrBybit", "#ffad0a"],
+  ];
+
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.replaceChildren();
+  rect(svg, pad.left, pad.top, width - pad.left - pad.right, chartBottom - pad.top, "#0c1219", 0, "expiry-chart-bg");
+  drawExpiryGrid(svg, width, height, pad, domain.ticks, domain.min, domain.max);
+  line(svg, pad.left, y(0), width - pad.right, y(0), "#d9e3ee", "", "zero-line");
+  series.forEach(([name, field, color], seriesIndex) => {
+    const pts = buckets.map((bucket, index) => [pad.left + index * xStep, y(bucket[field])]);
+    path(svg, pts.map(([xPos, yPos], index) => `${index === 0 ? "M" : "L"} ${xPos} ${yPos}`).join(" "), "none", color, 2.4);
+    pts.forEach(([xPos, yPos]) => circle(svg, xPos, yPos, 3.4, color));
+    const legendX = width - 235 + seriesIndex * 80;
+    line(svg, legendX, 34, legendX + 28, 34, color, "", "legend-line");
+    circle(svg, legendX + 14, 34, 3.4, color);
+    label(svg, legendX + 36, 39, name, "legend-label");
+  });
+  buckets.forEach((bucket, index) => label(svg, pad.left + index * xStep - 24, height - 18, bucket.label, "axis-label"));
+  label(svg, 20, height / 2, "25Δ RR (vol points)", "axis-title");
+
+  function y(value) {
+    return pad.top + (1 - (value - domain.min) / (domain.max - domain.min)) * (chartBottom - pad.top);
+  }
+}
+
+function drawExpiryGrid(svg, width, height, pad, ticks, min, max) {
+  const chartBottom = height - pad.bottom;
+  ticks.forEach((tick) => {
+    const yPos = pad.top + (1 - (tick - min) / (max - min || 1)) * (chartBottom - pad.top);
+    line(svg, pad.left, yPos, width - pad.right, yPos, "#2a333d", "", "grid-line");
+    label(svg, pad.left - 34, yPos + 4, expiryAxisValue(tick), "axis-label");
+  });
+  for (let index = 0; index <= 8; index += 1) {
+    const xPos = pad.left + (index / 8) * (width - pad.left - pad.right);
+    line(svg, xPos, pad.top, xPos, chartBottom, "#2a333d", "", "grid-line");
+  }
+}
+
+function renderExchangeLegend(svg, x, y, includeNet = false) {
+  [
+    ["Bybit", "#ffad0a"],
+    ["Okx", "#42a5f5"],
+    ["Deribit", "#08c38f"],
+  ].forEach(([name, color], index) => {
+    const xPos = x + index * 68;
+    rect(svg, xPos, y, 12, 12, color, 0);
+    label(svg, xPos + 22, y + 11, name, "legend-label");
+  });
+  if (includeNet) {
+    diamond(svg, x + 210, y + 6, 5, "#ff5b6f", "#ffffff");
+    line(svg, x + 220, y + 6, x + 244, y + 6, "#ffffff", "3 4", "legend-line");
+    label(svg, x + 252, y + 11, "Net", "legend-label");
+  }
+}
+
+function ratioColor(value, metric) {
+  if (metric === "gexUd") return value >= 0 ? "#7fb4e8" : "#5b92cf";
+  if (value < 0) return "#d22a2d";
+  if (metric === "pcRatio") return value > 1 ? (value > 1.55 ? "#cf2529" : "#e99898") : "#9bc59e";
+  return value >= 0 ? "#94be97" : "#d22a2d";
+}
+
+function expiryAxisValue(value) {
+  if (Math.abs(value) >= 1e9) return `$${Math.round(value / 1e9)}B`;
+  if (Math.abs(value) >= 1e6) return `${Math.round(value / 1e6)}M`;
+  return String(value);
 }
 
 function renderStudioTermStructureChart(svg, { rows, expiries, spotPrice, watermarked = false }) {
@@ -1120,6 +1470,12 @@ function setActiveButton(container, activeButton) {
   });
 }
 
+function setActiveByDataset(container, key, value) {
+  container.querySelectorAll("button").forEach((button) => {
+    button.classList.toggle("active", button.dataset[key] === value);
+  });
+}
+
 function collapseRows(rows) {
   const groups = new Map();
   rows.forEach((row) => {
@@ -1219,6 +1575,16 @@ function line(svg, x1, y1, x2, y2, stroke, dash = "", className = "marker-line")
   const node = svgNode("line", { x1, y1, x2, y2, stroke, class: className });
   if (dash) node.setAttribute("stroke-dasharray", dash);
   svg.append(node);
+}
+
+function circle(svg, cx, cy, r, fill, className = "") {
+  const node = svgNode("circle", { cx, cy, r, fill, class: className });
+  svg.append(node);
+}
+
+function diamond(svg, cx, cy, r, fill, stroke = "") {
+  const d = `M ${cx} ${cy - r} L ${cx + r} ${cy} L ${cx} ${cy + r} L ${cx - r} ${cy} Z`;
+  path(svg, d, fill, stroke, stroke ? 2 : 0, "diamond-marker");
 }
 
 function path(svg, d, fill, stroke, strokeWidth = 1, className = "") {

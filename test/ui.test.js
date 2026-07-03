@@ -25,6 +25,9 @@ test("V2 shell exposes GammaFlip-style advanced studio controls", () => {
     'id="studioModeSummary"',
     'id="studioCategoryDetails"',
     'id="layerChips"',
+    'id="expiryViewTabs"',
+    'id="expiryMetricTabs"',
+    'id="expiryDteTicks"',
     'class="studio-chart interactive-chart"',
     'id="tmControlsBar"',
     'id="termViewToggle"',
@@ -52,6 +55,10 @@ test("Studio chart supports GammaFlip-style chart interactions", () => {
     "GEX Term Structure",
     "Positioning",
     "Max Expiration",
+    "renderExpiryLevelsChart",
+    "renderExpiryPositioningChart",
+    "GEX NET by Expiration",
+    "25Δ RR by Expiration",
   ].forEach((needle) => {
     assert.match(app, new RegExp(escapeRegExp(needle)));
   });

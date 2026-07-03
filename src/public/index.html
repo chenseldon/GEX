@@ -141,9 +141,22 @@
               <button data-mode="day" type="button">Day</button>
               <button data-mode="hour" type="button">Hour</button>
             </div>
+            <div class="expiry-view-tabs" id="expiryViewTabs" hidden>
+              <button data-expiry-view="positioning" type="button">Positioning</button>
+              <button class="active" data-expiry-view="levels" type="button">Levels</button>
+            </div>
             <button id="reachButton" class="reach-button" type="button">Reach %</button>
             <button id="chartControlsButton" type="button">Controls</button>
             <button id="studioCsvButton" type="button">CSV</button>
+          </section>
+          <section class="expiry-metric-tabs" id="expiryMetricTabs" hidden aria-label="Expiry positioning metrics">
+            <button class="active" data-expiry-metric="oi" type="button">OI</button>
+            <button data-expiry-metric="pcRatio" type="button">P/C Ratio</button>
+            <button data-expiry-metric="gexAbs" type="button">GEX ABS</button>
+            <button data-expiry-metric="gexNet" type="button">GEX NET</button>
+            <button data-expiry-metric="gexCp" type="button">GEX C/P</button>
+            <button data-expiry-metric="gexUd" type="button">GEX U/D</button>
+            <button data-expiry-metric="rr25" type="button">25Δ RR</button>
           </section>
           <section id="studioModeSummary" class="studio-mode-summary panel" aria-live="polite"></section>
           <section id="studioCategoryDetails" class="studio-category-details panel" aria-live="polite"></section>
@@ -185,6 +198,9 @@
             <span>Zoom (+/-%)</span>
             <strong id="zoomValue">16%</strong>
             <input id="zoomSlider" type="range" min="1" max="100" value="16" />
+            <div id="expiryDteTicks" class="dte-ticks" hidden>
+              <span>-1</span><span>0</span><span>1</span><span>2</span><span>6</span><span>13</span><span>20</span><span>27</span><span>55</span><span>83</span><span>174</span><span>265</span><span>356</span>
+            </div>
           </section>
         </section>
 
