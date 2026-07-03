@@ -1,11 +1,11 @@
 const state = {
-  page: "dashboard",
+  page: "studio",
   symbol: "BTC",
   expiry: "",
   mode: "snapshot",
   category: "now",
   coverage: 50,
-  zoom: 7,
+  zoom: 16,
   live: true,
   layers: { positive: true, negative: true, absolute: true, regime: true },
   selectedMarkerId: "",
@@ -430,6 +430,7 @@ function renderDashboard() {
 }
 
 function renderStudio() {
+  document.querySelector("#studioPage").dataset.categoryMode = state.category;
   renderStudioTitle();
   renderStudioModeSummary();
   renderStudioCategoryDetails();
@@ -501,7 +502,7 @@ function renderStudioModeSummary() {
   });
   els.studioModeSummary.querySelector('[data-action="reset-chart"]').addEventListener("click", () => {
     state.panOffset = 0;
-    state.zoom = 7;
+    state.zoom = 16;
     els.zoomSlider.value = String(state.zoom);
     els.zoomValue.textContent = `${state.zoom}%`;
     state.crosshair = null;
@@ -727,6 +728,7 @@ function renderMarkerChips(levels) {
       node.className = `marker-chip${state.selectedMarkerId === level.id ? " active" : ""}`;
       node.setAttribute("data-marker-id", level.id);
       node.style.borderColor = level.color;
+      node.title = `${shortLevel(level.id)} ${price(level.strike)} ${money(level.value)} ${level.label}`;
       node.innerHTML = `
         <span style="background:${level.color}">${shortLevel(level.id)}</span>
         <strong>${price(level.strike)}</strong>
@@ -737,6 +739,10 @@ function renderMarkerChips(levels) {
         state.selectedMarkerId = state.selectedMarkerId === level.id ? "" : level.id;
         state.crosshair = level.strike;
         renderStudio();
+      });
+      node.addEventListener("mouseenter", () => {
+        state.crosshair = level.strike;
+        renderStudioMainChart();
       });
       return node;
     }),
@@ -788,7 +794,7 @@ function renderStudioTermStructureChart(svg, { rows, expiries, spotPrice, waterm
 
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.replaceChildren();
-  rect(svg, pad.left, pad.top, gridWidth, gridHeight, "#ffffff", 8, "chart-surface");
+  rect(svg, pad.left, pad.top, gridWidth, gridHeight, "#102a43", 8, "chart-surface");
 
   expiriesToRender.forEach((expiry, rowIndex) => {
     const yPos = pad.top + rowIndex * cellHeight;
@@ -809,8 +815,8 @@ function renderStudioTermStructureChart(svg, { rows, expiries, spotPrice, waterm
   const minStrike = Math.min(...strikes, spotPrice);
   const maxStrike = Math.max(...strikes, spotPrice);
   const spotX = pad.left + ((spotPrice - minStrike) / Math.max(maxStrike - minStrike, 1)) * gridWidth;
-  line(svg, spotX, pad.top, spotX, height - pad.bottom, "#111827", "4 4", "spot-line");
-  markerLabel(svg, spotX, height - 72, price(spotPrice), "#111827", true);
+  line(svg, spotX, pad.top, spotX, height - pad.bottom, "#e5eef8", "4 4", "spot-line");
+  markerLabel(svg, spotX, height - 72, price(spotPrice), "#e5eef8", true);
   label(svg, 20, 260, "Expiry", "axis-title");
   label(svg, width / 2 - 20, height - 4, "Strike", "axis-label");
   if (watermarked) {
@@ -937,10 +943,10 @@ function renderDualStrikeChart(
 
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.replaceChildren();
-  rect(svg, pad.left, pad.top, width - pad.left - pad.right, topBottom - pad.top, "#ffffff", 8, "chart-surface");
-  rect(svg, pad.left, bottomTop, width - pad.left - pad.right, height - pad.bottom - bottomTop, "#ffffff", 8, "chart-surface");
+  rect(svg, pad.left, pad.top, width - pad.left - pad.right, topBottom - pad.top, "#102a43", 8, "chart-surface");
+  rect(svg, pad.left, bottomTop, width - pad.left - pad.right, height - pad.bottom - bottomTop, "#102a43", 8, "chart-surface");
   addGrid(svg, width, topBottom + 8, pad, maxNet);
-  line(svg, pad.left, zeroY, width - pad.right, zeroY, "#d8dee8", "3 5", "zero-line");
+  line(svg, pad.left, zeroY, width - pad.right, zeroY, "#d6e6f8", "3 5", "zero-line");
 
   if (layers.regime) {
     visibleLevels.forEach((level) => {
@@ -983,15 +989,15 @@ function renderDualStrikeChart(
     line(svg, pos, pad.top, pos, height - pad.bottom, level.color, level.id === selectedMarkerId ? "" : "3 4", level.id === selectedMarkerId ? "marker-line selected-marker-line" : "marker-line");
     markerLabel(svg, pos, level.value < 0 ? zeroY + 22 : pad.top + 16, shortLevel(level.id), level.color);
   });
-  line(svg, x(spotPrice), pad.top, x(spotPrice), height - pad.bottom, "#111827", "4 4", "spot-line");
-  markerLabel(svg, x(spotPrice), topBottom + 16, price(spotPrice), "#111827", true);
+  line(svg, x(spotPrice), pad.top, x(spotPrice), height - pad.bottom, "#e5eef8", "4 4", "spot-line");
+  markerLabel(svg, x(spotPrice), topBottom + 16, price(spotPrice), "#e5eef8", true);
 
   if (Number.isFinite(crosshair)) {
     const boundedStrike = clamp(crosshair, minStrike, maxStrike);
     const crossX = x(boundedStrike);
-    line(svg, crossX, pad.top, crossX, height - pad.bottom, "#111827", "2 3", "crosshair-line");
-    line(svg, pad.left, zeroY, width - pad.right, zeroY, "#111827", "2 6", "crosshair-line faint");
-    markerLabel(svg, crossX, height - 70, formatStrike(boundedStrike), "#111827", true);
+    line(svg, crossX, pad.top, crossX, height - pad.bottom, "#e5eef8", "2 3", "crosshair-line");
+    line(svg, pad.left, zeroY, width - pad.right, zeroY, "#e5eef8", "2 6", "crosshair-line faint");
+    markerLabel(svg, crossX, height - 70, formatStrike(boundedStrike), "#e5eef8", true);
   }
 
   label(svg, 20, 160, "Net GEX", "axis-title");
@@ -1035,6 +1041,7 @@ function renderLineChart(svg, series, color, width, height) {
 
 function setPage(page) {
   state.page = page;
+  document.body.dataset.page = page;
   els.productMenu.hidden = true;
   document.querySelectorAll(".page").forEach((section) => {
     section.classList.toggle("active-page", section.id === `${page}Page`);
