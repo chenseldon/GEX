@@ -881,8 +881,8 @@ body[data-page="studio"] .active-page[data-category-mode="forecast"] .studio-cat
 body[data-page="studio"] .active-page[data-category-mode="forecast"] .chart-panel {
   overflow: hidden;
   border-color: #233140;
-  border-radius: 18px;
-  background: #171c25;
+  border-radius: 8px;
+  background: #06100f;
 }
 
 body[data-page="studio"] .active-page[data-category-mode="forecast"] .panel-header {
@@ -901,77 +901,10 @@ body[data-page="studio"] .active-page[data-category-mode="forecast"] .panel-head
 }
 
 body[data-page="studio"] .active-page[data-category-mode="forecast"] .studio-chart {
-  min-height: 540px;
+  min-height: calc(100vh - 190px);
   max-height: none;
-  padding: 0.65rem 0.65rem 0;
-  background: #171c25;
-}
-
-.forecast-copy {
-  display: grid;
-  gap: 0.65rem;
-  padding: 1.25rem 2rem 1.6rem;
-  border-top: 1px solid #233140;
-  background: #171c25;
-}
-
-.forecast-copy[hidden] {
-  display: none;
-}
-
-.forecast-eyebrow {
-  color: #8097ff;
-  font-size: 0.86rem;
-  font-weight: 900;
-  letter-spacing: 0.13em;
-}
-
-.forecast-copy h2 {
-  margin: 0;
-  color: #ffffff;
-  font-size: clamp(1.65rem, 2.2vw, 2.25rem);
-  line-height: 1.05;
-  letter-spacing: 0;
-  text-transform: none;
-}
-
-.forecast-copy p {
-  max-width: 48rem;
-  margin: 0;
-  color: #c2cedd;
-  font-size: 1.22rem;
-  line-height: 1.55;
-}
-
-.forecast-copy ul {
-  display: grid;
-  gap: 0.75rem;
-  margin: 1rem 0 0;
   padding: 0;
-  list-style: none;
-}
-
-.forecast-copy li {
-  color: #d5dce8;
-  font-size: 1.08rem;
-}
-
-.forecast-copy li::before {
-  margin-right: 0.65rem;
-  color: #8aa0ff;
-  content: "->";
-  font-weight: 900;
-}
-
-.forecast-copy button {
-  justify-self: start;
-  margin-top: 0.55rem;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  color: #8097ff;
-  font-size: 1.05rem;
-  font-weight: 900;
+  background: #06100f;
 }
 
 .tm-controls select,
@@ -1393,8 +1326,7 @@ body[data-page="studio"] .zoom-panel {
 .forecast-percentile-label,
 .forecast-percentile-value,
 .forecast-telemetry,
-.forecast-prompt-label,
-.forecast-play-icon {
+.forecast-density-value {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
@@ -1418,26 +1350,19 @@ body[data-page="studio"] .zoom-panel {
   font-weight: 800;
 }
 
-.forecast-telemetry-box,
-.forecast-prompt {
+.forecast-telemetry-box {
   stroke: #202b37;
   stroke-width: 1;
 }
 
-.forecast-prompt-label {
-  font-size: 18px;
-  font-weight: 900;
+.forecast-density-spine {
+  stroke-width: 1.2;
+  opacity: 0.9;
 }
 
-.forecast-play-circle {
-  stroke: #7992ff;
-  stroke-width: 1.5;
-}
-
-.forecast-play-icon {
-  font-size: 9px;
-  font-weight: 900;
-  text-transform: uppercase;
+.forecast-terminal-dot {
+  stroke: #ffffff;
+  stroke-width: 1.4;
 }
 
 .forecast-percentile-label {

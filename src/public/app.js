@@ -31,6 +31,28 @@ const state = {
 };
 
 let forecastCache = null;
+const defaultForecastInput = {
+  symbol: "BTC",
+  startPrice: 77134,
+  flipPrice: 76600,
+  iv: 0.333,
+  dte: 7.8,
+  expiryLabel: "May 29 09:00 (UTC+1)",
+  stepLabel: "1h",
+  pathCount: 20000,
+  visiblePathCount: 220,
+  steps: 56,
+  yMin: 62000,
+  yMax: 88000,
+  hoverDefault: 74800,
+  terminalSkew: -0.53,
+  positiveDrift: 0.0003,
+  negativeDrift: -0.00065,
+  positiveGammaWarp: 0.68,
+  negativeGammaWarp: 1.1,
+  flipPull: 0.012,
+  percentiles: { p10: 72300, p50: 77600, p90: 81200 },
+};
 
 const els = {
   productLabel: document.querySelector("#productLabel"),
@@ -88,7 +110,6 @@ const els = {
   studioCategoryDetails: document.querySelector("#studioCategoryDetails"),
   studioSnapshotMeta: document.querySelector("#studioSnapshotMeta"),
   studioStrikeChart: document.querySelector("#studioStrikeChart"),
-  forecastCopy: document.querySelector("#forecastCopy"),
   summaryRail: document.querySelector("#summaryRail"),
   layerChips: document.querySelector("#layerChips"),
   markerChips: document.querySelector("#markerChips"),
@@ -265,13 +286,6 @@ function bindEvents() {
     els.reachRows.hidden = true;
     els.reachStatus.textContent = "Press Compute";
     toggleHidden(els.reachPanel);
-  });
-  els.forecastCopy.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-action='open-monte-carlo']");
-    if (!button) return;
-    els.reachRows.hidden = true;
-    els.reachStatus.textContent = "Press Compute";
-    openModal(els.reachPanel);
   });
   els.reachComputeButton.addEventListener("click", () => {
     renderReachPanel();
@@ -522,7 +536,6 @@ function renderStudio() {
     els.studioSnapshotMeta.textContent = `${state.studio.symbol}: ${chartName} | ${state.expiry || "All expiries"} | ${formatTimestamp(state.studio.asOf)} | ${state.live ? "Live" : "Snapshot"}${splitText}${markerText}`;
   }
   renderStudioMainChart();
-  renderForecastCopy();
   renderSummaryRail();
   renderLayerChips();
   renderMarkerChips(state.studio.markers.keyLevels);
@@ -617,25 +630,6 @@ function renderStudioMainChart() {
     crosshair: state.crosshair,
     watermarked: true,
   });
-}
-
-function renderForecastCopy() {
-  const isForecast = state.category === "forecast";
-  els.forecastCopy.hidden = !isForecast;
-  if (!isForecast) {
-    els.forecastCopy.replaceChildren();
-    return;
-  }
-  els.forecastCopy.innerHTML = `
-    <div class="forecast-eyebrow">MONTE CARLO · TO EXPIRY</div>
-    <h2>Where does price land?</h2>
-    <p>20,000 GEX-warped paths to your chosen expiry - positive gamma compresses moves, negative amplifies them.</p>
-    <ul>
-      <li>Hover any price for the exact odds at expiry</li>
-      <li>p10 / p50 / p90 + sigma + skew on every run</li>
-    </ul>
-    <button type="button" data-action="open-monte-carlo">Open Monte Carlo -></button>
-  `;
 }
 
 function renderStudioModeSummary() {
@@ -934,39 +928,43 @@ function renderTermChart(svg, rows) {
   }
 }
 
+function resolveForecastInput() {
+  const live = globalThis.__GEX_FORECAST_DATA__?.[state.symbol] ?? globalThis.__GEX_FORECAST_DATA__;
+  return {
+    ...defaultForecastInput,
+    symbol: state.symbol,
+    ...(live || {}),
+  };
+}
+
 function monteCarloForecastData(hoverPrice = null) {
-  if (!forecastCache) {
-    const startPrice = 77134;
-    const flipPrice = 76600;
-    const iv = 0.333;
-    const dte = 7.8;
-    const steps = 56;
-    const visiblePathCount = 180;
-    const distributionCount = 20000;
-    const yMin = 62000;
-    const yMax = 88000;
-    const terminalDistribution = Array.from({ length: distributionCount }, (_, index) =>
-      forecastTerminal(startPrice, flipPrice, iv, dte, steps, index + 1000),
-    );
+  const input = resolveForecastInput();
+  const cacheKey = JSON.stringify(input);
+  if (!forecastCache || forecastCache.cacheKey !== cacheKey) {
+    const terminalDistribution = input.terminalDistribution
+      ? [...input.terminalDistribution].sort((a, b) => a - b)
+      : Array.from({ length: input.pathCount }, (_, index) =>
+          forecastTerminal(input.startPrice, input.flipPrice, input.iv, input.dte, input.steps, index + 1000, input),
+        ).sort((a, b) => a - b);
+    const paths =
+      input.paths ||
+      Array.from({ length: input.visiblePathCount }, (_, index) =>
+        forecastPath(input.startPrice, input.flipPrice, input.iv, input.dte, input.steps, index + 7, input),
+      );
     terminalDistribution.sort((a, b) => a - b);
     forecastCache = {
-      startPrice,
-      flipPrice,
-      iv,
-      dte,
-      steps,
-      yMin,
-      yMax,
-      paths: Array.from({ length: visiblePathCount }, (_, index) => forecastPath(startPrice, flipPrice, iv, dte, steps, index + 7)),
+      ...input,
+      cacheKey,
+      paths,
       terminalDistribution,
-      p10: percentile(terminalDistribution, 0.1),
-      p50: percentile(terminalDistribution, 0.5),
-      p90: percentile(terminalDistribution, 0.9),
+      p10: input.percentiles?.p10 ?? percentile(terminalDistribution, 0.1),
+      p50: input.percentiles?.p50 ?? percentile(terminalDistribution, 0.5),
+      p90: input.percentiles?.p90 ?? percentile(terminalDistribution, 0.9),
       sigma: stddev(terminalDistribution),
     };
   }
 
-  const hover = clamp(hoverPrice ?? 74800, forecastCache.yMin + 600, forecastCache.yMax - 600);
+  const hover = clamp(hoverPrice ?? forecastCache.hoverDefault, forecastCache.yMin + 600, forecastCache.yMax - 600);
   const chance = cumulativeProbability(forecastCache.terminalDistribution, hover);
   return {
     ...forecastCache,
@@ -975,7 +973,7 @@ function monteCarloForecastData(hoverPrice = null) {
   };
 }
 
-function forecastPath(startPrice, flipPrice, iv, dte, steps, seed) {
+function forecastPath(startPrice, flipPrice, iv, dte, steps, seed, input = defaultForecastInput) {
   let priceValue = startPrice;
   let random = seededRandom(seed);
   const dt = dte / 365 / steps;
@@ -983,9 +981,9 @@ function forecastPath(startPrice, flipPrice, iv, dte, steps, seed) {
   for (let step = 1; step <= steps; step += 1) {
     const z = normalFromRandom(random);
     const distanceToFlip = (priceValue - flipPrice) / startPrice;
-    const gammaWarp = distanceToFlip >= 0 ? 0.74 : 1.28;
-    const drift = distanceToFlip >= 0 ? 0.00055 : -0.00085;
-    const pullToFlip = -distanceToFlip * 0.012;
+    const gammaWarp = distanceToFlip >= 0 ? input.positiveGammaWarp : input.negativeGammaWarp;
+    const drift = distanceToFlip >= 0 ? input.positiveDrift : input.negativeDrift;
+    const pullToFlip = -distanceToFlip * input.flipPull;
     const shock = iv * Math.sqrt(dt) * z * gammaWarp;
     priceValue *= Math.exp(drift + pullToFlip + shock);
     priceValue = clamp(priceValue, 60000, 89500);
@@ -994,17 +992,17 @@ function forecastPath(startPrice, flipPrice, iv, dte, steps, seed) {
   return values;
 }
 
-function forecastTerminal(startPrice, flipPrice, iv, dte, steps, seed) {
-  return forecastPath(startPrice, flipPrice, iv, dte, steps, seed).at(-1);
+function forecastTerminal(startPrice, flipPrice, iv, dte, steps, seed, input = defaultForecastInput) {
+  return forecastPath(startPrice, flipPrice, iv, dte, steps, seed, input).at(-1);
 }
 
 function renderForecastMonteCarloChart(svg, data) {
   const width = 1120;
-  const height = 620;
-  const pad = { top: 24, right: 24, bottom: 54, left: 64 };
-  const plotRight = 895;
-  const densityLeft = 930;
-  const densityRight = 1084;
+  const height = 720;
+  const pad = { top: 26, right: 10, bottom: 54, left: 58 };
+  const plotRight = 922;
+  const densityLeft = 952;
+  const densityRight = 1110;
   const chartBottom = height - pad.bottom;
   const yTicks = [65000, 70000, 75000, 80000, 85000];
   const dateTicks = ["May 22", "May 23", "May 24", "May 25", "May 26", "May 27", "May 28", "May 29"];
@@ -1012,43 +1010,44 @@ function renderForecastMonteCarloChart(svg, data) {
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.replaceChildren();
   rect(svg, 0, 0, width, height, "#07100f", 0, "forecast-bg");
-  rect(svg, pad.left, pad.top, plotRight - pad.left, chartBottom - pad.top, "#07100f", 0, "forecast-plot-bg");
-  rect(svg, densityLeft, pad.top, densityRight - densityLeft, chartBottom - pad.top, "#0a1217", 0, "forecast-density-bg");
-  rect(svg, pad.left, y(data.flipPrice), plotRight - pad.left, chartBottom - y(data.flipPrice), "rgba(146, 104, 29, 0.28)", 0, "forecast-negative-zone");
+  rect(svg, pad.left, pad.top, plotRight - pad.left, chartBottom - pad.top, "#06100f", 0, "forecast-plot-bg");
+  rect(svg, densityLeft, pad.top, densityRight - densityLeft, chartBottom - pad.top, "#06100f", 0, "forecast-density-bg");
+  rect(svg, pad.left, y(data.flipPrice), plotRight - pad.left, chartBottom - y(data.flipPrice), "rgba(146, 104, 29, 0.34)", 0, "forecast-negative-zone");
 
   yTicks.forEach((tick) => {
     const yPos = y(tick);
-    line(svg, pad.left, yPos, densityRight, yPos, "#22302e", "", "forecast-grid-line");
+    line(svg, pad.left, yPos, densityRight, yPos, "#1e2b29", "", "forecast-grid-line");
     const tickLabel = label(svg, pad.left - 12, yPos + 5, `${Math.round(tick / 1000)}k`, "forecast-axis-label");
     tickLabel.setAttribute("text-anchor", "end");
   });
   dateTicks.forEach((tick, index) => {
     const xPos = pad.left + (index / (dateTicks.length - 1)) * (plotRight - pad.left);
-    line(svg, xPos, pad.top, xPos, chartBottom, "#1a2624", "", "forecast-grid-line vertical");
+    line(svg, xPos, pad.top, xPos, chartBottom, "#192521", "", "forecast-grid-line vertical");
     label(svg, xPos - 16, height - 20, tick, "forecast-axis-label");
   });
 
   data.paths.forEach((values, index) => {
     const terminal = values.at(-1);
-    const stroke = terminal >= data.startPrice ? "rgba(59, 178, 103, 0.42)" : "rgba(215, 94, 49, 0.42)";
-    const strokeWidth = index % 17 === 0 ? 1.35 : 0.85;
+    const stroke = terminal >= data.startPrice ? "rgba(65, 180, 105, 0.46)" : "rgba(214, 96, 49, 0.46)";
+    const strokeWidth = index % 19 === 0 ? 1.25 : 0.78;
     drawForecastPath(svg, values, stroke, strokeWidth, "forecast-path");
   });
 
   line(svg, pad.left, y(data.startPrice), plotRight, y(data.startPrice), "#d7dce7", "", "forecast-spot-line");
-  line(svg, pad.left, y(data.flipPrice), plotRight, y(data.flipPrice), "#ff00ff", "3 4", "forecast-flip-line");
+  line(svg, pad.left, y(data.flipPrice), densityRight, y(data.flipPrice), "#ff00ff", "2 4", "forecast-flip-line");
   line(svg, pad.left, y(data.hover), plotRight, y(data.hover), "#f2cc6b", "", "forecast-hover-line");
-  circle(svg, pad.left, y(data.startPrice), 8, "#e7eef6", "forecast-start-halo");
-  circle(svg, pad.left, y(data.startPrice), 4, "#e7eef6", "forecast-start-dot");
-  markerLabel(svg, pad.left + 54, y(data.startPrice) - 8, `BTC - $${price(data.startPrice)}`, "#1c2631", false);
-  markerLabel(svg, plotRight - 170, y(data.flipPrice) - 12, `Flip - $${formatK(data.flipPrice)}`, "#2a1535", false);
-  markerLabel(svg, plotRight - 80, y(data.hover) - 2, `$${formatK(data.hover)} - May 29`, "#101820", false);
+  circle(svg, pad.left, y(data.startPrice), 12, "#e7eef6", "forecast-start-halo");
+  circle(svg, pad.left, y(data.startPrice), 5, "#e7eef6", "forecast-start-dot");
+  markerLabel(svg, pad.left + 62, y(data.startPrice) - 9, `${data.symbol} · $${price(data.startPrice)}`, "#1a2428", false);
+  markerLabel(svg, plotRight - 185, y(data.flipPrice) - 12, `Flip · $${formatK(data.flipPrice)}`, "#2a1535", false);
+  circle(svg, plotRight, y(data.hover), 5, "#efc35a", "forecast-terminal-dot");
+  markerLabel(svg, plotRight - 92, y(data.hover) - 2, `≤ $${formatK(data.hover)} · May 29`, "#101820", false);
 
   renderTerminalDensity(svg, data, densityLeft, densityRight, pad.top, chartBottom);
   renderForecastTelemetry(svg, data, pad.left + 10, pad.top + 10);
-  renderForecastPrompt(svg, pad.left - 32, chartBottom - 46);
   label(svg, 18, pad.top + 250, "Price", "forecast-axis-title");
-  label(svg, densityLeft + 30, chartBottom + 36, "Terminal density", "forecast-axis-label");
+  const densityLabel = label(svg, densityLeft + 30, chartBottom + 36, "Terminal density", "forecast-axis-label");
+  densityLabel.setAttribute("fill", "#7d8794");
 
   function x(index) {
     return pad.left + (index / data.steps) * (plotRight - pad.left);
@@ -1068,7 +1067,7 @@ function renderForecastMonteCarloChart(svg, data) {
   }
 
   function densityX(density) {
-    return densityRight - density * (densityRight - densityLeft - 28);
+    return densityLeft + density * (densityRight - densityLeft - 16);
   }
 
   function renderTerminalDensity(target, forecast, left, right, top, bottom) {
@@ -1083,49 +1082,44 @@ function renderForecastMonteCarloChart(svg, data) {
       const priceLevel = forecast.yMin + (index / (bins - 1)) * (forecast.yMax - forecast.yMin);
       return [densityX(count / max), densityY(priceLevel)];
     });
-    const densityPath = [`M ${right} ${bottom}`, ...points.map(([xPos, yPos]) => `L ${xPos} ${yPos}`), `L ${right} ${top}`, "Z"].join(" ");
+    const densityPath = [`M ${left} ${bottom}`, ...points.map(([xPos, yPos]) => `L ${xPos} ${yPos}`), `L ${left} ${top}`, "Z"].join(" ");
     path(target, densityPath, "rgba(66, 118, 190, 0.28)", "#5b8ee6", 2, "forecast-density-curve");
+    line(target, left, top, left, bottom, "#75a5ff", "", "forecast-density-spine");
     [
       ["p90", forecast.p90, "#63ce83"],
       ["p50", forecast.p50, "#d9e1f5"],
       ["p10", forecast.p10, "#ff5d50"],
     ].forEach(([name, value, color]) => {
       const yPos = densityY(value);
-      circle(target, densityX(0.55), yPos, 3.5, color, "forecast-percentile-dot");
-      label(target, densityX(0.55) + 12, yPos - 8, name, "forecast-percentile-label", color);
-      label(target, densityX(0.55) + 12, yPos + 9, `$${formatK(value)}`, "forecast-percentile-value", color);
+      const xPos = densityX(0.56);
+      circle(target, xPos, yPos, 3.5, color, "forecast-percentile-dot");
+      label(target, xPos + 12, yPos - 8, name, "forecast-percentile-label", color);
+      label(target, xPos + 12, yPos + 10, `$${formatK(value)}`, "forecast-percentile-value", color);
     });
-    markerLabel(target, left + 52, densityY(forecast.hover), `Chance: ${(forecast.chance * 100).toFixed(1)}%`, "#101820", false);
-    const stats = label(target, left + 8, top + 18, `sigma $${price(Math.round(forecast.sigma))}`, "forecast-telemetry");
+    markerLabel(target, right - 72, densityY(forecast.hover), `Chance: ${(forecast.chance * 100).toFixed(1)}%`, "#101820", false);
+    const stats = label(target, left + 8, top + 18, `σ    $${price(Math.round(forecast.sigma))}`, "forecast-telemetry");
     stats.setAttribute("fill", "#bfd1ff");
-    const skew = label(target, left + 8, top + 36, "Skew -0.53", "forecast-telemetry");
+    const skew = label(target, left + 8, top + 36, `Skew ${forecast.terminalSkew.toFixed(2)}`, "forecast-telemetry");
     skew.setAttribute("fill", "#bfd1ff");
   }
 }
 
 function renderForecastTelemetry(svg, data, x, y) {
-  rect(svg, x, y, 248, 58, "rgba(13, 19, 31, 0.86)", 0, "forecast-telemetry-box");
+  rect(svg, x, y, 260, 62, "rgba(13, 19, 31, 0.86)", 0, "forecast-telemetry-box");
   [
-    `BTC - $${price(data.startPrice)} - IV ${(data.iv * 100).toFixed(1)}%`,
-    `DTE ${data.dte.toFixed(1)}d - May 29 09:00 (UTC+1)`,
-    `Step 1h - 20,000 paths`,
+    `${data.symbol} · $${price(data.startPrice)} · IV ${(data.iv * 100).toFixed(1)}%`,
+    `DTE ${data.dte.toFixed(1)}d → ${data.expiryLabel}`,
+    `Step ${data.stepLabel} · ${price(data.pathCount)} paths`,
   ].forEach((text, index) => label(svg, x + 8, y + 16 + index * 15, text, "forecast-telemetry"));
-}
-
-function renderForecastPrompt(svg, x, y) {
-  rect(svg, x, y - 22, 360, 44, "rgba(18, 25, 42, 0.92)", 20, "forecast-prompt");
-  circle(svg, x + 27, y, 11, "#18233d", "forecast-play-circle");
-  label(svg, x + 17, y + 5, "play", "forecast-play-icon", "#89a2ff");
-  label(svg, x + 54, y + 7, "Hover any level -> odds", "forecast-prompt-label", "#f2f5ff");
 }
 
 function forecastPriceFromPointer(event) {
   const rectBox = els.studioStrikeChart.getBoundingClientRect();
   const data = monteCarloForecastData();
   const padTop = 24;
-  const chartBottom = 620 - 54;
-  const ratio = clamp((event.clientY - rectBox.top) / Math.max(rectBox.height, 1), padTop / 620, chartBottom / 620);
-  const local = (ratio * 620 - padTop) / (chartBottom - padTop);
+  const chartBottom = 720 - 54;
+  const ratio = clamp((event.clientY - rectBox.top) / Math.max(rectBox.height, 1), padTop / 720, chartBottom / 720);
+  const local = (ratio * 720 - padTop) / (chartBottom - padTop);
   return data.yMax - local * (data.yMax - data.yMin);
 }
 
