@@ -73,9 +73,11 @@ const els = {
   studioCsvButton: document.querySelector("#studioCsvButton"),
   studioTitle: document.querySelector("#studioTitle"),
   studioModeSummary: document.querySelector("#studioModeSummary"),
+  studioCategoryDetails: document.querySelector("#studioCategoryDetails"),
   studioSnapshotMeta: document.querySelector("#studioSnapshotMeta"),
   studioStrikeChart: document.querySelector("#studioStrikeChart"),
   summaryRail: document.querySelector("#summaryRail"),
+  layerChips: document.querySelector("#layerChips"),
   markerChips: document.querySelector("#markerChips"),
   zoomSlider: document.querySelector("#zoomSlider"),
   zoomValue: document.querySelector("#zoomValue"),
@@ -430,9 +432,38 @@ function renderDashboard() {
 function renderStudio() {
   renderStudioTitle();
   renderStudioModeSummary();
+  renderStudioCategoryDetails();
   const selected = selectedMarker();
   const markerText = selected ? ` | ${shortLevel(selected.id)} ${price(selected.strike)}` : "";
-  els.studioSnapshotMeta.textContent = `${state.studio.symbol}: GEX by Strike | ${state.expiry || "All expiries"} | ${formatTimestamp(state.studio.asOf)} | ${state.live ? "Live" : "Snapshot"}${markerText}`;
+  const chartName = state.category === "expiry" ? "GEX Term Structure" : "GEX by Strike";
+  els.studioSnapshotMeta.textContent = `${state.studio.symbol}: ${chartName} | ${state.expiry || "All expiries"} | ${formatTimestamp(state.studio.asOf)} | ${state.live ? "Live" : "Snapshot"}${markerText}`;
+  renderStudioMainChart();
+  renderSummaryRail();
+  renderLayerChips();
+  renderMarkerChips(state.studio.markers.keyLevels);
+}
+
+function renderStudioTitle() {
+  const titles = {
+    now: `${state.symbol}: GEX by Strike`,
+    expiry: `${state.symbol}: GEX Term Structure`,
+    history: `${state.symbol}: GEX History Replay`,
+    forecast: `${state.symbol}: GEX Forecast`,
+  };
+  els.studioTitle.textContent = titles[state.category];
+}
+
+function renderStudioMainChart() {
+  if (state.category === "expiry") {
+    renderStudioTermStructureChart(els.studioStrikeChart, {
+      rows: state.studio.rows,
+      expiries: state.studio.expiries,
+      spotPrice: state.studio.spotPrice,
+      watermarked: true,
+    });
+    return;
+  }
+
   renderDualStrikeChart(els.studioStrikeChart, {
     rows: state.studio.rows,
     keyLevels: state.studio.markers.keyLevels,
@@ -444,13 +475,6 @@ function renderStudio() {
     crosshair: state.crosshair,
     watermarked: true,
   });
-  renderSummaryRail();
-  renderMarkerChips(state.studio.markers.keyLevels);
-}
-
-function renderStudioTitle() {
-  const label = titleCase(state.category);
-  els.studioTitle.textContent = `${state.symbol}: ${label} GEX by Strike`;
 }
 
 function renderStudioModeSummary() {
@@ -484,6 +508,43 @@ function renderStudioModeSummary() {
     state.selectedMarkerId = "";
     renderStudio();
   });
+}
+
+function renderStudioCategoryDetails() {
+  const expiryCount = state.studio.expiries?.length ?? 0;
+  const cards = {
+    now: [
+      ["Live", "Snapshot / Day / Hour update the same strike map while the Live switch controls replay state."],
+      ["Crosshair", "Hover the chart to inspect strike levels. Drag to pan and use the wheel or slider to zoom."],
+      ["Layers", "Positive, Negative, Absolute, and Regime chips below the chart toggle the matching visual layer."],
+    ],
+    expiry: [
+      ["Positioning", "Term structure view across listed expiries and strikes, matching the GammaFlip Expiry workspace."],
+      ["Levels", `${expiryCount} expiries loaded. Use the global expiry picker to isolate one settlement.`],
+      ["Max Expiration", "&lt;= 356d · synthetic fixture coverage until live options ingestion is connected."],
+    ],
+    history: [
+      ["Replay", "Time Machine controls move the snapshot through the local 24h series."],
+      ["Scrubber", `Current replay point ${state.timeIndex}:00. Use previous, next, play, or the range control.`],
+      ["Compare", "Marker selection stays active while replaying so walls can be tracked across time."],
+    ],
+    forecast: [
+      ["Reach %", "Open the Reach % panel to estimate probability of touching flip, walls, magnets, and volatility triggers."],
+      ["Scenario", "Forecast mode keeps the current strike chart visible and frames upside/downside target levels."],
+      ["Data", "Forecast values are deterministic fixtures until realtime volatility and options data are added."],
+    ],
+  }[state.category];
+
+  els.studioCategoryDetails.innerHTML = cards
+    .map(
+      ([title, body]) => `
+        <article>
+          <strong>${title}</strong>
+          <span>${body}</span>
+        </article>
+      `,
+    )
+    .join("");
 }
 
 function renderFocusedCharts() {
@@ -628,6 +689,36 @@ function renderReachPanel() {
   );
 }
 
+function renderLayerChips() {
+  const layers = [
+    ["positive", "Positive"],
+    ["negative", "Negative"],
+    ["absolute", "Absolute"],
+    ["regime", "Regime"],
+  ];
+  els.layerChips.replaceChildren(
+    ...layers.map(([key, labelText]) => {
+      const node = document.createElement("button");
+      node.type = "button";
+      node.className = `layer-chip ${key}${state.layers[key] ? " active" : ""}`;
+      node.setAttribute("data-layer", key);
+      node.textContent = labelText;
+      node.addEventListener("click", () => {
+        state.layers[key] = !state.layers[key];
+        const input = {
+          positive: els.showPositiveToggle,
+          negative: els.showNegativeToggle,
+          absolute: els.showAbsoluteToggle,
+          regime: els.showRegimeToggle,
+        }[key];
+        input.checked = state.layers[key];
+        renderStudio();
+      });
+      return node;
+    }),
+  );
+}
+
 function renderMarkerChips(levels) {
   els.markerChips.replaceChildren(
     ...levels.map((level) => {
@@ -674,6 +765,56 @@ function renderTermChart(svg, rows) {
   function y(value) {
     const usable = height - pad.top - pad.bottom;
     return pad.top + ((maxAbs - value) / (maxAbs * 2 || 1)) * usable;
+  }
+}
+
+function renderStudioTermStructureChart(svg, { rows, expiries, spotPrice, watermarked = false }) {
+  const width = 1120;
+  const height = 520;
+  const pad = { top: 34, right: 34, bottom: 54, left: 92 };
+  const strikes = [...new Set(rows.map((row) => row.strike))].sort((a, b) => a - b);
+  const expiryRows = (expiries?.length ? expiries : [])
+    .map((row) => row.expiry)
+    .filter(Boolean);
+  const expiriesToRender = expiryRows.length ? expiryRows : [...new Set(rows.map((row) => row.expiry))].filter(Boolean);
+  const matrix = new Map(rows.map((row) => [`${row.expiry}:${row.strike}`, row.gex]));
+  const values = rows.map((row) => row.gex);
+  const min = Math.min(...values, -1);
+  const max = Math.max(...values, 1);
+  const gridWidth = width - pad.left - pad.right;
+  const gridHeight = height - pad.top - pad.bottom;
+  const cellWidth = gridWidth / Math.max(strikes.length, 1);
+  const cellHeight = gridHeight / Math.max(expiriesToRender.length, 1);
+
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.replaceChildren();
+  rect(svg, pad.left, pad.top, gridWidth, gridHeight, "#ffffff", 8, "chart-surface");
+
+  expiriesToRender.forEach((expiry, rowIndex) => {
+    const yPos = pad.top + rowIndex * cellHeight;
+    label(svg, 22, yPos + cellHeight * 0.62, formatExpiryCode(expiry), "axis-label");
+    strikes.forEach((strike, columnIndex) => {
+      const value = matrix.get(`${expiry}:${strike}`) ?? 0;
+      const xPos = pad.left + columnIndex * cellWidth;
+      rect(svg, xPos + 1, yPos + 1, Math.max(cellWidth - 2, 2), Math.max(cellHeight - 2, 2), heatColor(value, min, max, "net"), 3, "term-cell");
+    });
+  });
+
+  strikes.forEach((strike, index) => {
+    if (index % Math.ceil(strikes.length / 8) === 0) {
+      label(svg, pad.left + index * cellWidth, height - 18, formatStrike(strike), "axis-label");
+    }
+  });
+
+  const minStrike = Math.min(...strikes, spotPrice);
+  const maxStrike = Math.max(...strikes, spotPrice);
+  const spotX = pad.left + ((spotPrice - minStrike) / Math.max(maxStrike - minStrike, 1)) * gridWidth;
+  line(svg, spotX, pad.top, spotX, height - pad.bottom, "#111827", "4 4", "spot-line");
+  markerLabel(svg, spotX, height - 72, price(spotPrice), "#111827", true);
+  label(svg, 20, 260, "Expiry", "axis-title");
+  label(svg, width / 2 - 20, height - 4, "Strike", "axis-label");
+  if (watermarked) {
+    label(svg, width / 2 - 110, height / 2 + 20, "GEX Research", "watermark");
   }
 }
 

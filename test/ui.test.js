@@ -23,6 +23,8 @@ test("V2 shell exposes GammaFlip-style advanced studio controls", () => {
     'id="showAbsoluteToggle"',
     'id="showRegimeToggle"',
     'id="studioModeSummary"',
+    'id="studioCategoryDetails"',
+    'id="layerChips"',
     'class="studio-chart interactive-chart"',
     'id="tmControlsBar"',
     'id="termViewToggle"',
@@ -44,6 +46,12 @@ test("Studio chart supports GammaFlip-style chart interactions", () => {
     "wheel",
     "data-action=\"reset-chart\"",
     "data-marker-id",
+    "renderLayerChips",
+    "data-layer",
+    "renderStudioTermStructureChart",
+    "GEX Term Structure",
+    "Positioning",
+    "Max Expiration",
   ].forEach((needle) => {
     assert.match(app, new RegExp(escapeRegExp(needle)));
   });

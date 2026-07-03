@@ -683,6 +683,37 @@ svg {
   padding: 0.35rem 0.65rem;
 }
 
+.studio-category-details {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  padding: 0.7rem 0.85rem;
+}
+
+.studio-category-details article {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+  background: rgb(255 255 255 / 68%);
+}
+
+.studio-category-details strong,
+.studio-category-details span {
+  display: block;
+}
+
+.studio-category-details strong {
+  margin-bottom: 0.25rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.studio-category-details span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
 .interactive-chart {
   cursor: crosshair;
   touch-action: none;
@@ -697,6 +728,46 @@ svg {
   display: flex;
   gap: 0.5rem;
   overflow-x: auto;
+}
+
+.layer-chips {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  margin-bottom: 0.55rem;
+}
+
+.layer-chip {
+  min-height: 1.7rem;
+  border-color: rgb(102 83 255 / 28%);
+  border-radius: 999px;
+  padding: 0.28rem 0.72rem;
+  background: rgb(102 83 255 / 12%);
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.layer-chip.active {
+  color: #fff;
+  background: linear-gradient(135deg, #6653ff, #7d20ff);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 18%);
+}
+
+.layer-chip.positive.active {
+  background: linear-gradient(135deg, #2fcf6f, #1b9d55);
+}
+
+.layer-chip.negative.active {
+  background: linear-gradient(135deg, #ff5b6f, #d22a45);
+}
+
+.layer-chip.absolute.active {
+  background: linear-gradient(135deg, #8f5cff, #7d20ff);
+}
+
+.layer-chip.regime.active {
+  background: linear-gradient(135deg, #5d9cec, #6653ff);
 }
 
 .marker-chip {
@@ -761,6 +832,11 @@ svg {
 
 .crosshair-line.faint {
   opacity: 0.18;
+}
+
+.term-cell {
+  stroke: rgb(255 255 255 / 38%);
+  stroke-width: 0.4;
 }
 
 .zoom-panel {
