@@ -7,6 +7,10 @@ const state = {
   coverage: 50,
   zoom: 7,
   live: true,
+  layers: { positive: true, negative: true, absolute: true, regime: true },
+  selectedMarkerId: "",
+  crosshair: null,
+  panOffset: 0,
   termView: "chart",
   timeIndex: 23,
   instruments: [],
@@ -58,12 +62,17 @@ const els = {
   reachStatus: document.querySelector("#reachStatus"),
   chartControlsButton: document.querySelector("#chartControlsButton"),
   chartControlsPanel: document.querySelector("#chartControlsPanel"),
+  showPositiveToggle: document.querySelector("#showPositiveToggle"),
+  showNegativeToggle: document.querySelector("#showNegativeToggle"),
+  showAbsoluteToggle: document.querySelector("#showAbsoluteToggle"),
+  showRegimeToggle: document.querySelector("#showRegimeToggle"),
   tmPrevButton: document.querySelector("#tmPrevButton"),
   tmPlayButton: document.querySelector("#tmPlayButton"),
   tmNextButton: document.querySelector("#tmNextButton"),
   tmScrubber: document.querySelector("#tmScrubber"),
   studioCsvButton: document.querySelector("#studioCsvButton"),
   studioTitle: document.querySelector("#studioTitle"),
+  studioModeSummary: document.querySelector("#studioModeSummary"),
   studioSnapshotMeta: document.querySelector("#studioSnapshotMeta"),
   studioStrikeChart: document.querySelector("#studioStrikeChart"),
   summaryRail: document.querySelector("#summaryRail"),
@@ -169,8 +178,14 @@ function bindEvents() {
     const button = event.target.closest("[data-category]");
     if (!button) return;
     state.category = button.dataset.category;
+    state.crosshair = null;
     setActiveButton(els.categoryTabs, button);
-    renderStudioTitle();
+    if (state.category === "history") {
+      state.live = false;
+      els.liveToggle.checked = false;
+      renderLiveState();
+    }
+    renderStudio();
   });
 
   els.modeTabs.addEventListener("click", async (event) => {
@@ -209,6 +224,8 @@ function bindEvents() {
     els.reachStatus.textContent = "Computed from local fixture volatility";
   });
   els.chartControlsButton.addEventListener("click", () => toggleHidden(els.chartControlsPanel));
+  bindLayerControls();
+  bindStudioChartInteractions();
 
   els.zoomSlider.addEventListener("input", (event) => {
     state.zoom = Number(event.target.value);
@@ -223,6 +240,66 @@ function bindEvents() {
     ]);
     renderNotes();
   });
+}
+
+function bindLayerControls() {
+  [
+    [els.showPositiveToggle, "positive"],
+    [els.showNegativeToggle, "negative"],
+    [els.showAbsoluteToggle, "absolute"],
+    [els.showRegimeToggle, "regime"],
+  ].forEach(([input, key]) => {
+    input.addEventListener("change", () => {
+      state.layers[key] = input.checked;
+      renderStudio();
+    });
+  });
+}
+
+function bindStudioChartInteractions() {
+  let dragStart = null;
+
+  els.studioStrikeChart.addEventListener("pointerdown", (event) => {
+    dragStart = { x: event.clientX, panOffset: state.panOffset };
+    els.studioStrikeChart.setPointerCapture?.(event.pointerId);
+    els.studioStrikeChart.classList.add("is-dragging");
+  });
+
+  els.studioStrikeChart.addEventListener("pointermove", (event) => {
+    const strike = strikeFromPointer(event);
+    if (strike) state.crosshair = strike;
+    if (dragStart) {
+      const delta = event.clientX - dragStart.x;
+      state.panOffset = clamp(dragStart.panOffset - delta / 240, -3, 3);
+    }
+    renderStudio();
+  });
+
+  els.studioStrikeChart.addEventListener("pointerup", (event) => {
+    dragStart = null;
+    els.studioStrikeChart.releasePointerCapture?.(event.pointerId);
+    els.studioStrikeChart.classList.remove("is-dragging");
+  });
+
+  els.studioStrikeChart.addEventListener("pointerleave", () => {
+    if (!dragStart) {
+      state.crosshair = null;
+      renderStudio();
+    }
+  });
+
+  els.studioStrikeChart.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      const step = event.deltaY < 0 ? -2 : 2;
+      state.zoom = clamp(state.zoom + step, Number(els.zoomSlider.min), Number(els.zoomSlider.max));
+      els.zoomSlider.value = String(state.zoom);
+      els.zoomValue.textContent = `${state.zoom}%`;
+      renderStudio();
+    },
+    { passive: false },
+  );
 }
 
 async function loadData() {
@@ -352,12 +429,19 @@ function renderDashboard() {
 
 function renderStudio() {
   renderStudioTitle();
-  els.studioSnapshotMeta.textContent = `${state.studio.symbol}: GEX by Strike · ${state.expiry || "All expiries"} · ${formatTimestamp(state.studio.asOf)} · ${state.live ? "Live" : "Snapshot"}`;
+  renderStudioModeSummary();
+  const selected = selectedMarker();
+  const markerText = selected ? ` | ${shortLevel(selected.id)} ${price(selected.strike)}` : "";
+  els.studioSnapshotMeta.textContent = `${state.studio.symbol}: GEX by Strike | ${state.expiry || "All expiries"} | ${formatTimestamp(state.studio.asOf)} | ${state.live ? "Live" : "Snapshot"}${markerText}`;
   renderDualStrikeChart(els.studioStrikeChart, {
     rows: state.studio.rows,
     keyLevels: state.studio.markers.keyLevels,
     spotPrice: state.studio.spotPrice,
     zoomPct: state.zoom,
+    panOffset: state.panOffset,
+    layers: state.layers,
+    selectedMarkerId: state.selectedMarkerId,
+    crosshair: state.crosshair,
     watermarked: true,
   });
   renderSummaryRail();
@@ -367,6 +451,39 @@ function renderStudio() {
 function renderStudioTitle() {
   const label = titleCase(state.category);
   els.studioTitle.textContent = `${state.symbol}: ${label} GEX by Strike`;
+}
+
+function renderStudioModeSummary() {
+  const copy = {
+    now: ["Now", "Live snapshot view with spot, flip, walls, and current dealer hedging pressure."],
+    expiry: ["Expiry", "Expiry-focused strike map. Use the expiry picker to isolate one settlement and compare walls."],
+    history: ["History", "Replay mode. Move the time scrubber or drag the chart to review wall migration through the day."],
+    forecast: ["Forecast", "Scenario view. Reach % estimates and selected levels help frame upside and downside targets."],
+  }[state.category];
+  const layers = Object.entries(state.layers)
+    .filter(([, enabled]) => enabled)
+    .map(([key]) => titleCase(key))
+    .join(" / ");
+  els.studioModeSummary.innerHTML = `
+    <div><strong>${copy[0]}</strong><span>${copy[1]}</span></div>
+    <div class="mode-actions">
+      <button type="button" data-action="open-controls">Layers: ${layers || "None"}</button>
+      <button type="button" data-action="reset-chart">Reset chart</button>
+      <span>Wheel zoom | drag pan | crosshair on hover</span>
+    </div>
+  `;
+  els.studioModeSummary.querySelector('[data-action="open-controls"]').addEventListener("click", () => {
+    els.chartControlsPanel.hidden = false;
+  });
+  els.studioModeSummary.querySelector('[data-action="reset-chart"]').addEventListener("click", () => {
+    state.panOffset = 0;
+    state.zoom = 7;
+    els.zoomSlider.value = String(state.zoom);
+    els.zoomValue.textContent = `${state.zoom}%`;
+    state.crosshair = null;
+    state.selectedMarkerId = "";
+    renderStudio();
+  });
 }
 
 function renderFocusedCharts() {
@@ -516,9 +633,15 @@ function renderMarkerChips(levels) {
     ...levels.map((level) => {
       const node = document.createElement("button");
       node.type = "button";
-      node.className = "marker-chip";
+      node.className = `marker-chip${state.selectedMarkerId === level.id ? " active" : ""}`;
+      node.setAttribute("data-marker-id", level.id);
       node.style.borderColor = level.color;
       node.innerHTML = `<span style="background:${level.color}">${shortLevel(level.id)}</span><strong>${price(level.strike)}</strong><small>${level.label}</small>`;
+      node.addEventListener("click", () => {
+        state.selectedMarkerId = state.selectedMarkerId === level.id ? "" : level.id;
+        state.crosshair = level.strike;
+        renderStudio();
+      });
       return node;
     }),
   );
@@ -635,9 +758,22 @@ function renderLiveState() {
   document.body.classList.toggle("is-paused", !state.live);
 }
 
-function renderDualStrikeChart(svg, { rows, keyLevels, spotPrice, zoomPct = 100, watermarked = false }) {
+function renderDualStrikeChart(
+  svg,
+  {
+    rows,
+    keyLevels,
+    spotPrice,
+    zoomPct = 100,
+    panOffset = 0,
+    layers = { positive: true, negative: true, absolute: true, regime: true },
+    selectedMarkerId = "",
+    crosshair = null,
+    watermarked = false,
+  },
+) {
   const collapsed = collapseRows(rows);
-  const visible = filterByZoom(collapsed, spotPrice, zoomPct);
+  const visible = filterByZoom(collapsed, spotPrice, zoomPct, panOffset);
   const width = 1120;
   const height = 520;
   const pad = { top: 32, right: 38, bottom: 42, left: 78 };
@@ -650,6 +786,8 @@ function renderDualStrikeChart(svg, { rows, keyLevels, spotPrice, zoomPct = 100,
   const maxStrike = Math.max(...visible.map((row) => row.strike), spotPrice, ...keyLevels.map((level) => level.strike));
   const barWidth = Math.max(7, (width - pad.left - pad.right) / visible.length - 8);
   const zeroY = yTop(0);
+  const selected = keyLevels.find((level) => level.id === selectedMarkerId);
+  const visibleLevels = layers.regime ? keyLevels : selected ? [selected] : [];
 
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.replaceChildren();
@@ -658,16 +796,33 @@ function renderDualStrikeChart(svg, { rows, keyLevels, spotPrice, zoomPct = 100,
   addGrid(svg, width, topBottom + 8, pad, maxNet);
   line(svg, pad.left, zeroY, width - pad.right, zeroY, "#d8dee8", "3 5", "zero-line");
 
+  if (layers.regime) {
+    visibleLevels.forEach((level) => {
+      const widthPx = Math.max(barWidth * 1.2, 18);
+      rect(svg, x(level.strike) - widthPx / 2, pad.top, widthPx, height - pad.bottom - pad.top, colorToArea(level.color), 4, "regime-band");
+    });
+  }
+
+  if (selected) {
+    const widthPx = Math.max(barWidth * 2.5, 28);
+    rect(svg, x(selected.strike) - widthPx / 2, pad.top, widthPx, height - pad.bottom - pad.top, colorToArea(selected.color), 6, "selected-marker-band");
+  }
+
   visible.forEach((row) => {
+    if (row.gex > 0 && !layers.positive) return;
+    if (row.gex < 0 && !layers.negative) return;
     const xPos = x(row.strike) - barWidth / 2;
     const yPos = row.gex >= 0 ? yTop(row.gex) : zeroY;
     const barHeight = Math.abs(yTop(row.gex) - zeroY);
     rect(svg, xPos, yPos, barWidth, barHeight, row.gex >= 0 ? "#31c46b" : "#e5384f", 3);
+  });
+
+  visible.forEach((row) => {
     label(svg, x(row.strike) - 15, height - 16, formatStrike(row.strike), "axis-label");
   });
 
   const areaPoints = visible.map((row) => [x(row.strike), yBottom(Math.abs(row.gex))]);
-  if (areaPoints.length > 1) {
+  if (layers.absolute && areaPoints.length > 1) {
     const areaPath = [
       `M ${areaPoints[0][0]} ${height - pad.bottom}`,
       ...areaPoints.map(([xPos, yPos]) => `L ${xPos} ${yPos}`),
@@ -677,13 +832,21 @@ function renderDualStrikeChart(svg, { rows, keyLevels, spotPrice, zoomPct = 100,
     path(svg, areaPath, "rgba(125, 32, 255, 0.38)", "#7d20ff", 2, "abs-area");
   }
 
-  keyLevels.forEach((level) => {
+  visibleLevels.forEach((level) => {
     const pos = x(level.strike);
-    line(svg, pos, pad.top, pos, height - pad.bottom, level.color, "3 4", "marker-line");
+    line(svg, pos, pad.top, pos, height - pad.bottom, level.color, level.id === selectedMarkerId ? "" : "3 4", level.id === selectedMarkerId ? "marker-line selected-marker-line" : "marker-line");
     markerLabel(svg, pos, level.id.includes("negative") ? zeroY + 22 : pad.top + 16, shortLevel(level.id), level.color);
   });
   line(svg, x(spotPrice), pad.top, x(spotPrice), height - pad.bottom, "#111827", "4 4", "spot-line");
   markerLabel(svg, x(spotPrice), topBottom + 16, price(spotPrice), "#111827", true);
+
+  if (Number.isFinite(crosshair)) {
+    const boundedStrike = clamp(crosshair, minStrike, maxStrike);
+    const crossX = x(boundedStrike);
+    line(svg, crossX, pad.top, crossX, height - pad.bottom, "#111827", "2 3", "crosshair-line");
+    line(svg, pad.left, zeroY, width - pad.right, zeroY, "#111827", "2 6", "crosshair-line faint");
+    markerLabel(svg, crossX, height - 70, formatStrike(boundedStrike), "#111827", true);
+  }
 
   label(svg, 20, 160, "Net GEX", "axis-title");
   label(svg, 20, 420, "Abs. GEX", "axis-title");
@@ -818,11 +981,38 @@ function collapseRows(rows) {
   return [...groups.values()].sort((a, b) => a.strike - b.strike);
 }
 
-function filterByZoom(rows, spotPrice, zoomPct) {
+function selectedMarker() {
+  return state.studio?.markers?.keyLevels?.find((level) => level.id === state.selectedMarkerId);
+}
+
+function strikeFromPointer(event) {
+  if (!state.studio) return null;
+  const domain = visibleStrikeDomain();
+  if (!domain) return null;
+  const rect = els.studioStrikeChart.getBoundingClientRect();
+  const percent = clamp((event.clientX - rect.left) / Math.max(rect.width, 1), 0, 1);
+  return domain.min + (domain.max - domain.min) * percent;
+}
+
+function visibleStrikeDomain() {
+  if (!state.studio?.rows?.length) return null;
+  const collapsed = collapseRows(state.studio.rows);
+  const visible = filterByZoom(collapsed, state.studio.spotPrice, state.zoom, state.panOffset);
+  const min = Math.min(...visible.map((row) => row.strike), state.studio.spotPrice);
+  const max = Math.max(...visible.map((row) => row.strike), state.studio.spotPrice);
+  return { min, max };
+}
+
+function filterByZoom(rows, spotPrice, zoomPct, panOffset = 0) {
   if (zoomPct >= 95) return rows;
   const distance = spotPrice * (zoomPct / 100);
-  const filtered = rows.filter((row) => row.strike >= spotPrice - distance && row.strike <= spotPrice + distance);
+  const center = spotPrice + panOffset * distance * 0.45;
+  const filtered = rows.filter((row) => row.strike >= center - distance && row.strike <= center + distance);
   return filtered.length >= 4 ? filtered : rows;
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
 async function api(path) {

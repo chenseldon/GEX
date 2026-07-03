@@ -648,6 +648,51 @@ svg {
   padding: 0.65rem;
 }
 
+.studio-mode-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.7rem 0.85rem;
+}
+
+.studio-mode-summary strong,
+.studio-mode-summary span {
+  display: block;
+}
+
+.studio-mode-summary strong {
+  font-size: 0.92rem;
+}
+
+.studio-mode-summary span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.mode-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.mode-actions button {
+  min-height: 2rem;
+  padding: 0.35rem 0.65rem;
+}
+
+.interactive-chart {
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.interactive-chart.is-dragging {
+  cursor: grabbing;
+}
+
 .marker-chips {
   display: flex;
   gap: 0.5rem;
@@ -662,6 +707,11 @@ svg {
   align-items: center;
   border-color: var(--border);
   background: #ffffff;
+}
+
+.marker-chip.active {
+  background: rgb(102 83 255 / 10%);
+  box-shadow: 0 0 0 2px rgb(102 83 255 / 18%);
 }
 
 .marker-chip span {
@@ -683,6 +733,27 @@ svg {
   grid-column: 2;
   color: var(--muted);
   font-size: 0.72rem;
+}
+
+.regime-band {
+  opacity: 0.34;
+}
+
+.selected-marker-band {
+  opacity: 0.55;
+}
+
+.selected-marker-line {
+  stroke-width: 3;
+}
+
+.crosshair-line {
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+.crosshair-line.faint {
+  opacity: 0.18;
 }
 
 .zoom-panel {

@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const html = await readFile(new URL("../src/public/index.html", import.meta.url), "utf8");
+const app = await readFile(new URL("../src/public/app.js", import.meta.url), "utf8");
 
 test("V2 shell exposes GammaFlip-style advanced studio controls", () => {
   [
@@ -17,6 +18,12 @@ test("V2 shell exposes GammaFlip-style advanced studio controls", () => {
     'id="reachDirectionTabs"',
     'id="reachComputeButton"',
     'id="chartControlsPanel"',
+    'id="showPositiveToggle"',
+    'id="showNegativeToggle"',
+    'id="showAbsoluteToggle"',
+    'id="showRegimeToggle"',
+    'id="studioModeSummary"',
+    'class="studio-chart interactive-chart"',
     'id="tmControlsBar"',
     'id="termViewToggle"',
     'id="settingsDialog"',
@@ -24,6 +31,21 @@ test("V2 shell exposes GammaFlip-style advanced studio controls", () => {
     'id="helpDrawer"',
   ].forEach((needle) => {
     assert.match(html, new RegExp(escapeRegExp(needle)));
+  });
+});
+
+test("Studio chart supports GammaFlip-style chart interactions", () => {
+  [
+    "selectedMarkerId",
+    "crosshair",
+    "panOffset",
+    "bindStudioChartInteractions",
+    "pointermove",
+    "wheel",
+    "data-action=\"reset-chart\"",
+    "data-marker-id",
+  ].forEach((needle) => {
+    assert.match(app, new RegExp(escapeRegExp(needle)));
   });
 });
 

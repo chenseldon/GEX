@@ -154,6 +154,7 @@
             <button id="chartControlsButton" type="button">Controls</button>
             <button id="studioCsvButton" type="button">CSV</button>
           </section>
+          <section id="studioModeSummary" class="studio-mode-summary panel" aria-live="polite"></section>
 
           <section class="tm-controls panel" id="tmControlsBar">
             <button id="tmPrevButton" type="button">|&lt;</button>
@@ -177,7 +178,7 @@
                   <p id="studioSnapshotMeta">Loading studio snapshot...</p>
                 </div>
               </div>
-              <svg id="studioStrikeChart" class="studio-chart" role="img" aria-label="Studio GEX by strike"></svg>
+              <svg id="studioStrikeChart" class="studio-chart interactive-chart" role="img" aria-label="Studio GEX by strike" tabindex="0"></svg>
             </article>
 
             <aside class="summary-rail" id="summaryRail" aria-label="Summary rail"></aside>
