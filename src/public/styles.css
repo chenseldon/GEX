@@ -729,8 +729,15 @@ svg {
   font-size: 0.9rem;
 }
 
+.marker-chip em {
+  color: var(--text);
+  font-size: 0.74rem;
+  font-style: normal;
+  font-weight: 800;
+}
+
 .marker-chip small {
-  grid-column: 2;
+  grid-column: 2 / 3;
   color: var(--muted);
   font-size: 0.72rem;
 }

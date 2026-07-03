@@ -437,6 +437,9 @@ function buildUiMetricsFromRows({
   const positivePeak = maxBy(positiveRows, (row) => row.gex) ?? maxBy(rows, (row) => row.gex);
   const negativePeak = maxBy(negativeRows, (row) => Math.abs(row.gex)) ?? maxBy(rows, (row) => Math.abs(row.gex));
   const absolutePeak = maxBy(rows, (row) => Math.abs(row.gex));
+  const positiveRanked = positiveRows.slice().sort((a, b) => b.gex - a.gex || a.strike - b.strike);
+  const negativeRanked = negativeRows.slice().sort((a, b) => Math.abs(b.gex) - Math.abs(a.gex) || a.strike - b.strike);
+  const absoluteRanked = rows.slice().sort((a, b) => Math.abs(b.gex) - Math.abs(a.gex) || a.strike - b.strike);
   const maxVolatility = rows
     .slice()
     .sort((a, b) => Math.abs(a.strike - gammaFlip) - Math.abs(b.strike - gammaFlip))[0];
@@ -469,6 +472,17 @@ function buildUiMetricsFromRows({
       level("positive_peak", "Positive Peak", positivePeak?.strike ?? callWall, positivePeak?.gex ?? 0, "#31c46b"),
       level("negative_peak", "Negative Peak", negativePeak?.strike ?? putWall, negativePeak?.gex ?? 0, "#e5384f"),
       level("absolute_max", "Absolute Max", absolutePeak?.strike ?? maxPainStrike, absolutePeak?.gex ?? 0, "#7d20ff"),
+    ],
+    studioKeyLevels: [
+      level("negative_2", "Vol. Trigger", negativeRanked[1]?.strike ?? putWall, negativeRanked[1]?.gex ?? negativePeak?.gex ?? 0, "#ff5b6f"),
+      level("max_volatility", "Max Volatility", maxVolatility?.strike ?? gammaFlip, maxVolatility?.gex ?? 0, "#e5384f"),
+      level("negative_1", "Vol. Trigger", negativeRanked[0]?.strike ?? putWall, negativeRanked[0]?.gex ?? 0, "#ff3d57"),
+      level("flip", "Regime Change", gammaFlip, 0, "#ff00ff"),
+      level("absolute_2", "Magnet", absoluteRanked[1]?.strike ?? maxPainStrike, Math.abs(absoluteRanked[1]?.gex ?? absolutePeak?.gex ?? 0), "#9b5cff"),
+      level("positive_1", "Gamma Resist.", positiveRanked[0]?.strike ?? callWall, positiveRanked[0]?.gex ?? 0, "#2fcf6f"),
+      level("absolute_1", "Magnet", absoluteRanked[0]?.strike ?? maxPainStrike, Math.abs(absoluteRanked[0]?.gex ?? 0), "#7d20ff"),
+      level("positive_2", "Gamma Resist.", positiveRanked[1]?.strike ?? callWall, positiveRanked[1]?.gex ?? positivePeak?.gex ?? 0, "#20b963"),
+      level("max_stability", "Max Stability", maxStability?.strike ?? maxPainStrike, maxStability?.gex ?? 0, "#1fcb6a"),
     ],
   };
 }

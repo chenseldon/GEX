@@ -72,6 +72,20 @@ test("GET /api/gex/studio respects expiry filtering and includes summary rail", 
     payload.summaryRail.map((card) => card.id),
     ["flip_point", "hedging_pressure", "absolute_gex"],
   );
+  assert.deepEqual(
+    payload.markers.keyLevels.map((level) => level.id),
+    [
+      "negative_2",
+      "max_volatility",
+      "negative_1",
+      "flip",
+      "absolute_2",
+      "positive_1",
+      "absolute_1",
+      "positive_2",
+      "max_stability",
+    ],
+  );
 });
 
 test("GET /api/gex/trends rejects unsupported symbols", async () => {

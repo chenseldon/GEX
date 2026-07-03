@@ -636,7 +636,12 @@ function renderMarkerChips(levels) {
       node.className = `marker-chip${state.selectedMarkerId === level.id ? " active" : ""}`;
       node.setAttribute("data-marker-id", level.id);
       node.style.borderColor = level.color;
-      node.innerHTML = `<span style="background:${level.color}">${shortLevel(level.id)}</span><strong>${price(level.strike)}</strong><small>${level.label}</small>`;
+      node.innerHTML = `
+        <span style="background:${level.color}">${shortLevel(level.id)}</span>
+        <strong>${price(level.strike)}</strong>
+        <em>${money(level.value)}</em>
+        <small>${level.label}</small>
+      `;
       node.addEventListener("click", () => {
         state.selectedMarkerId = state.selectedMarkerId === level.id ? "" : level.id;
         state.crosshair = level.strike;
@@ -835,7 +840,7 @@ function renderDualStrikeChart(
   visibleLevels.forEach((level) => {
     const pos = x(level.strike);
     line(svg, pos, pad.top, pos, height - pad.bottom, level.color, level.id === selectedMarkerId ? "" : "3 4", level.id === selectedMarkerId ? "marker-line selected-marker-line" : "marker-line");
-    markerLabel(svg, pos, level.id.includes("negative") ? zeroY + 22 : pad.top + 16, shortLevel(level.id), level.color);
+    markerLabel(svg, pos, level.value < 0 ? zeroY + 22 : pad.top + 16, shortLevel(level.id), level.color);
   });
   line(svg, x(spotPrice), pad.top, x(spotPrice), height - pad.bottom, "#111827", "4 4", "spot-line");
   markerLabel(svg, x(spotPrice), topBottom + 16, price(spotPrice), "#111827", true);
@@ -1165,5 +1170,11 @@ function shortLevel(id) {
     positive_peak: "P1",
     negative_peak: "N1",
     absolute_max: "A1",
+    negative_2: "N2",
+    negative_1: "N1",
+    absolute_2: "A2",
+    absolute_1: "A1",
+    positive_1: "P1",
+    positive_2: "P2",
   }[id] ?? id.slice(0, 2).toUpperCase();
 }

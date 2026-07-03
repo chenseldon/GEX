@@ -128,7 +128,7 @@ export function createApiHandler() {
             putWall: snapshot.putWall,
             maxPainStrike: snapshot.maxPainStrike,
             peaks: ui.peaks,
-            keyLevels: ui.keyLevels,
+            keyLevels: ui.studioKeyLevels,
           },
           summary: summaryPayload(snapshot, ui),
           summaryRail: buildSummaryRail({ ...snapshot, byStrike: rows }),
