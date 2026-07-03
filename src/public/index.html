@@ -33,16 +33,6 @@
           </button>
         </div>
 
-        <nav class="primary-nav" aria-label="Main navigation">
-          <button class="active" data-page="dashboard" type="button">Dashboard</button>
-          <button data-page="studio" type="button">Studio</button>
-          <button data-page="strikes" type="button">Strikes</button>
-          <button data-page="term" type="button">Term Structure</button>
-          <button data-page="signals" type="button">Signals</button>
-          <button data-page="notes" type="button">Research Notes</button>
-          <button data-page="health" type="button">Data Health</button>
-        </nav>
-
         <div class="header-actions">
           <button id="refreshButton" class="countdown" type="button">50s</button>
           <button id="notificationButton" class="icon-button notification-button" type="button" aria-label="Notifications">◇</button>
@@ -360,13 +350,11 @@
       <div id="productMenu" class="product-menu" hidden role="menu" aria-label="Product menu">
         <button class="active" data-page-jump="studio" type="button"><span>▥</span> GEX Studio</button>
         <button data-page-jump="dashboard" type="button"><span>▥</span> Dashboard</button>
-        <hr />
-        <button type="button"><span>▥</span> Academy</button>
-        <button type="button"><span>▥</span> Blog</button>
-        <button type="button"><span>▥</span> Glossary</button>
-        <button type="button"><span>▥</span> Home</button>
-        <hr />
-        <button type="button"><span>▥</span> What's New</button>
+        <button data-page-jump="strikes" type="button"><span>▥</span> Strikes</button>
+        <button data-page-jump="term" type="button"><span>▥</span> Term Structure</button>
+        <button data-page-jump="signals" type="button"><span>▥</span> Signals</button>
+        <button data-page-jump="notes" type="button"><span>▥</span> Research Notes</button>
+        <button data-page-jump="health" type="button"><span>▥</span> Data Health</button>
       </div>
 
       <aside id="helpDrawer" class="help-drawer" hidden aria-label="Help drawer">

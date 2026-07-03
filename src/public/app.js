@@ -115,7 +115,7 @@ async function init() {
 }
 
 function bindEvents() {
-  els.primaryNav.addEventListener("click", async (event) => {
+  els.primaryNav?.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-page]");
     if (!button) return;
     setPage(button.dataset.page);

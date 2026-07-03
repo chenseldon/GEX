@@ -76,7 +76,7 @@ input[type="range"] {
   position: sticky;
   z-index: 10;
   top: 0;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr);
   gap: 0.7rem;
   align-items: center;
   min-height: 56px;
@@ -181,6 +181,7 @@ body[data-page="studio"] .primary-nav {
   display: flex;
   gap: 0.35rem;
   align-items: center;
+  justify-self: end;
 }
 
 .countdown {
@@ -1113,8 +1114,8 @@ body[data-page="studio"] #zoomSlider {
 .product-menu {
   position: fixed;
   z-index: 35;
-  top: 4.45rem;
-  left: 12rem;
+  top: 4.35rem;
+  left: 11.9rem;
   display: grid;
   width: 20rem;
   padding: 0.45rem 0;
@@ -1136,7 +1137,7 @@ body[data-page="studio"] #zoomSlider {
   border: 0;
   border-radius: 0;
   background: transparent;
-  padding: 0.8rem 1rem;
+  padding: 0.82rem 1rem;
   color: var(--text);
   font-size: 1rem;
 }
