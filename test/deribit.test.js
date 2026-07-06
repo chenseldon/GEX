@@ -1,0 +1,241 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import test from "node:test";
+
+import { createApiHandler } from "../src/server/api.js";
+import { createDeribitJsonRpcClient } from "../src/integrations/deribitClient.js";
+import { normalizeDeribitOptionTicker } from "../src/integrations/deribitNormalize.js";
+import {
+  createDuckDbRepository,
+  initializeDuckDb,
+} from "../src/data/duckdbRepository.js";
+
+const observedAt = "2026-07-06T08:00:00.000Z";
+
+test("Deribit JSON-RPC client posts method and params", async () => {
+  const calls = [];
+  const client = createDeribitJsonRpcClient({
+    endpoint: "https://example.test/api/v2",
+    fetchImpl: async (url, options) => {
+      calls.push({ url, body: JSON.parse(options.body) });
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: [{ instrument_name: "BTC-26JUL24-60000-C" }] }));
+    },
+  });
+
+  const result = await client.call("public/get_instruments", {
+    currency: "BTC",
+    kind: "option",
+    expired: false,
+  });
+
+  assert.equal(calls[0].url, "https://example.test/api/v2");
+  assert.equal(calls[0].body.method, "public/get_instruments");
+  assert.equal(calls[0].body.params.currency, "BTC");
+  assert.deepEqual(result, [{ instrument_name: "BTC-26JUL24-60000-C" }]);
+});
+
+test("Deribit ticker normalization converts API payload into GEX contract shape", () => {
+  const row = normalizeDeribitOptionTicker({
+    instrument: {
+      instrument_name: "BTC-26JUL24-60000-C",
+      strike: 60000,
+      expiration_timestamp: Date.UTC(2024, 6, 26, 8),
+      option_type: "call",
+    },
+    ticker: {
+      instrument_name: "BTC-26JUL24-60000-C",
+      mark_iv: 62,
+      open_interest: 123,
+      mark_price: 0.041,
+      underlying_price: 61234,
+      stats: { volume: 45 },
+      greeks: { gamma: 0.000041 },
+    },
+    observedAt,
+  });
+
+  assert.equal(row.warning, null);
+  assert.equal(row.contract.instrumentName, "BTC-26JUL24-60000-C");
+  assert.equal(row.contract.expiry, "2024-07-26");
+  assert.equal(row.contract.optionType, "call");
+  assert.equal(row.contract.impliedVolatility, 0.62);
+  assert.equal(row.contract.openInterest, 123);
+  assert.equal(row.contract.volume, 45);
+  assert.equal(row.contract.markPrice, 0.041);
+  assert.equal(row.contract.underlyingPrice, 61234);
+});
+
+test("Deribit ticker normalization reports unusable missing market fields", () => {
+  const row = normalizeDeribitOptionTicker({
+    instrument: {
+      instrument_name: "BTC-26JUL24-60000-P",
+      strike: 60000,
+      option_type: "put",
+    },
+    ticker: {
+      instrument_name: "BTC-26JUL24-60000-P",
+      mark_iv: null,
+      open_interest: 10,
+      underlying_price: 61234,
+    },
+    observedAt,
+  });
+
+  assert.equal(row.contract, null);
+  assert.match(row.warning, /mark_iv/);
+});
+
+test("DuckDB repository initializes schema and returns latest symbol snapshot", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-duckdb-"));
+  const dbPath = join(dir, "gex.duckdb");
+
+  try {
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    await repo.insertDeribitSnapshot({
+      symbol: "BTC",
+      observedAt,
+      instruments: [
+        {
+          instrument_name: "BTC-26JUL24-60000-C",
+          currency: "BTC",
+          kind: "option",
+          strike: 60000,
+          option_type: "call",
+          expiration_timestamp: Date.UTC(2024, 6, 26, 8),
+          is_active: true,
+        },
+      ],
+      tickers: [
+        {
+          instrumentName: "BTC-26JUL24-60000-C",
+          observedAt,
+          underlyingPrice: 61234,
+          openInterest: 123,
+          markIv: 62,
+          markPrice: 0.041,
+          bidPrice: 0.04,
+          askPrice: 0.042,
+          volume: 45,
+          greeks: { gamma: 0.000041 },
+          raw: { instrument_name: "BTC-26JUL24-60000-C" },
+        },
+      ],
+      warnings: [],
+    });
+
+    const latest = await repo.getLatestOptionChain("BTC");
+
+    assert.equal(latest.symbol, "BTC");
+    assert.equal(latest.spotPrice, 61234);
+    assert.equal(latest.asOf, observedAt);
+    assert.equal(latest.contracts.length, 1);
+    assert.equal(latest.contracts[0].instrumentName, "BTC-26JUL24-60000-C");
+    assert.equal(latest.contracts[0].impliedVolatility, 0.62);
+    await repo.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("DuckDB repository records failed Deribit collection runs for data health", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-duckdb-failure-"));
+  const dbPath = join(dir, "gex.duckdb");
+
+  try {
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    await repo.recordSourceFailure({
+      venue: "deribit",
+      symbol: "BTC",
+      observedAt,
+      error: "Connect Timeout Error",
+    });
+
+    const health = await repo.getHealth();
+
+    assert.equal(health.status, "unavailable");
+    assert.equal(health.lastStatus, "error");
+    assert.match(health.error, /Connect Timeout/);
+    await repo.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("API auto source uses DuckDB latest Deribit snapshot when available", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-api-duckdb-"));
+  const dbPath = join(dir, "gex.duckdb");
+  const previousSource = process.env.DATA_SOURCE;
+  const previousDbPath = process.env.GEX_DB_PATH;
+
+  try {
+    process.env.DATA_SOURCE = "auto";
+    process.env.GEX_DB_PATH = dbPath;
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    await repo.insertDeribitSnapshot({
+      symbol: "BTC",
+      observedAt,
+      instruments: [
+        {
+          instrument_name: "BTC-26JUL24-60000-C",
+          currency: "BTC",
+          kind: "option",
+          strike: 60000,
+          option_type: "call",
+          expiration_timestamp: Date.UTC(2024, 6, 26, 8),
+          is_active: true,
+        },
+        {
+          instrument_name: "BTC-26JUL24-60000-P",
+          currency: "BTC",
+          kind: "option",
+          strike: 60000,
+          option_type: "put",
+          expiration_timestamp: Date.UTC(2024, 6, 26, 8),
+          is_active: true,
+        },
+      ],
+      tickers: [
+        ticker("BTC-26JUL24-60000-C", 61000, 62, 125),
+        ticker("BTC-26JUL24-60000-P", 61000, 65, 175),
+      ],
+      warnings: [],
+    });
+    await repo.close();
+
+    const handler = createApiHandler();
+    const response = await handler(new Request("http://localhost/api/gex/dashboard?symbol=BTC"));
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(payload.sourceLabel, "Deribit");
+    assert.equal(payload.asOf, observedAt);
+    assert.equal(payload.spotPrice, 61000);
+  } finally {
+    if (previousSource === undefined) delete process.env.DATA_SOURCE;
+    else process.env.DATA_SOURCE = previousSource;
+    if (previousDbPath === undefined) delete process.env.GEX_DB_PATH;
+    else process.env.GEX_DB_PATH = previousDbPath;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+function ticker(instrumentName, underlyingPrice, markIv, openInterest) {
+  return {
+    instrumentName,
+    observedAt,
+    underlyingPrice,
+    openInterest,
+    markIv,
+    markPrice: 0.04,
+    bidPrice: 0.039,
+    askPrice: 0.041,
+    volume: 12,
+    greeks: { gamma: 0.00004 },
+    raw: { instrument_name: instrumentName },
+  };
+}

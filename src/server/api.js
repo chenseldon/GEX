@@ -7,6 +7,7 @@ import {
   calculateGexSnapshot,
 } from "../domain/gex.js";
 import { instruments, optionChains, SAMPLE_AS_OF } from "../domain/sampleData.js";
+import { createDuckDbRepository, getDuckDbPath } from "../data/duckdbRepository.js";
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
@@ -16,23 +17,39 @@ const jsonHeaders = {
 export function createApiHandler() {
   const snapshots = new Map();
 
-  function getSnapshot(symbol) {
+  function getFixtureSnapshot(symbol) {
     if (!snapshots.has(symbol)) {
       const instrument = instruments.find((item) => item.symbol === symbol);
       if (!instrument) {
         throw new Error(`Unsupported symbol: ${symbol}`);
       }
-      snapshots.set(
-        symbol,
-        calculateGexSnapshot({
+      const snapshot = calculateGexSnapshot({
           symbol,
           spotPrice: instrument.spotPrice,
           asOf: SAMPLE_AS_OF,
           contracts: optionChains[symbol],
-        }),
-      );
+        });
+      snapshots.set(symbol, {
+        ...snapshot,
+        sourceLabel: "Deribit + Bybit + OKX",
+        sourceName: "sample-deribit-fixture",
+      });
     }
     return snapshots.get(symbol);
+  }
+
+  async function getSnapshot(symbol) {
+    const source = process.env.DATA_SOURCE ?? "fixture";
+    if (source === "deribit" || source === "auto") {
+      const deribit = await getDeribitSnapshot(symbol);
+      if (deribit) {
+        return deribit;
+      }
+      if (source === "deribit") {
+        throw new Error(`Deribit data unavailable for symbol: ${symbol}`);
+      }
+    }
+    return getFixtureSnapshot(symbol);
   }
 
   return async function handleRequest(request) {
@@ -44,7 +61,7 @@ export function createApiHandler() {
       }
 
       if (url.pathname === "/api/gex/summary") {
-        const snapshot = getSnapshot(requiredSymbol(url));
+        const snapshot = await getSnapshot(requiredSymbol(url));
         const ui = buildUiMetrics(snapshot);
         return json({
           symbol: snapshot.symbol,
@@ -65,13 +82,13 @@ export function createApiHandler() {
       }
 
       if (url.pathname === "/api/gex/dashboard") {
-        const snapshot = getSnapshot(requiredSymbol(url));
+        const snapshot = await getSnapshot(requiredSymbol(url));
         const ui = buildUiMetrics(snapshot);
         return json({
           symbol: snapshot.symbol,
           spotPrice: snapshot.spotPrice,
           asOf: snapshot.asOf,
-          sourceLabel: "Deribit + Bybit + OKX",
+          sourceLabel: snapshot.sourceLabel,
           gauges: [
             gauge("Gamma Regime", ui.gauges.regime, ui.gauges.regime >= 0 ? "Positive" : "Negative"),
             gauge("GEX Call/Put", ui.gauges.callPut, Math.abs(ui.gauges.callPut) < 0.15 ? "Neutral" : ui.gauges.callPut > 0 ? "Call led" : "Put led"),
@@ -91,7 +108,7 @@ export function createApiHandler() {
       }
 
       if (url.pathname === "/api/gex/by-strike") {
-        const snapshot = getSnapshot(requiredSymbol(url));
+        const snapshot = await getSnapshot(requiredSymbol(url));
         const expiry = url.searchParams.get("expiry");
         const rows = expiry
           ? snapshot.byStrike.filter((row) => row.expiry === expiry)
@@ -109,7 +126,7 @@ export function createApiHandler() {
       }
 
       if (url.pathname === "/api/gex/studio") {
-        const snapshot = getSnapshot(requiredSymbol(url));
+        const snapshot = await getSnapshot(requiredSymbol(url));
         const expiry = url.searchParams.get("expiry");
         const rows = expiry
           ? snapshot.byStrike.filter((row) => row.expiry === expiry)
@@ -137,7 +154,7 @@ export function createApiHandler() {
       }
 
       if (url.pathname === "/api/gex/term-structure") {
-        const snapshot = getSnapshot(requiredSymbol(url));
+        const snapshot = await getSnapshot(requiredSymbol(url));
         return json({
           symbol: snapshot.symbol,
           rows: snapshot.byExpiry,
@@ -145,17 +162,17 @@ export function createApiHandler() {
       }
 
       if (url.pathname === "/api/gex/trends") {
-        const snapshot = getSnapshot(requiredSymbol(url));
+        const snapshot = await getSnapshot(requiredSymbol(url));
         return json(buildTrendSeries(snapshot));
       }
 
       if (url.pathname === "/api/gex/heatmap") {
-        const snapshot = getSnapshot(requiredSymbol(url));
+        const snapshot = await getSnapshot(requiredSymbol(url));
         return json(buildHeatmapMatrix(snapshot, { type: url.searchParams.get("type") ?? "net" }));
       }
 
       if (url.pathname === "/api/gex/change-table") {
-        const snapshot = getSnapshot(requiredSymbol(url));
+        const snapshot = await getSnapshot(requiredSymbol(url));
         return json(
           buildChangeTable(snapshot, {
             coverage: Number(url.searchParams.get("coverage") ?? 50),
@@ -164,7 +181,7 @@ export function createApiHandler() {
       }
 
       if (url.pathname === "/api/signals") {
-        const snapshot = getSnapshot(requiredSymbol(url));
+        const snapshot = await getSnapshot(requiredSymbol(url));
         return json({
           symbol: snapshot.symbol,
           spotPrice: snapshot.spotPrice,
@@ -179,6 +196,7 @@ export function createApiHandler() {
       }
 
       if (url.pathname === "/api/data-health") {
+        const deribit = await getDeribitHealth();
         return json({
           sources: [
             {
@@ -188,6 +206,7 @@ export function createApiHandler() {
               freshnessSeconds: 0,
               limitation: "Static fixture for model and UI validation; replace with live collector in V1.",
             },
+            deribit,
           ],
           coverage: {
             symbols: instruments.length,
@@ -199,7 +218,7 @@ export function createApiHandler() {
 
       return json({ error: "Not found" }, 404);
     } catch (error) {
-      const status = /Unsupported symbol|symbol is required|type must be|coverage must be/.test(error.message)
+      const status = /Unsupported symbol|symbol is required|type must be|coverage must be|Deribit data unavailable/.test(error.message)
         ? 400
         : 500;
       return json({ error: error.message }, status);
@@ -249,4 +268,46 @@ function summaryPayload(snapshot, ui) {
     upDownRatio: ui.upDownRatio,
     signalState: snapshot.signalState,
   };
+}
+
+async function getDeribitSnapshot(symbol) {
+  let repo;
+  try {
+    repo = await createDuckDbRepository({ dbPath: getDuckDbPath() });
+    const latest = await repo.getLatestOptionChain(symbol);
+    if (!latest || latest.contracts.length === 0) {
+      return null;
+    }
+    const snapshot = calculateGexSnapshot(latest);
+    return {
+      ...snapshot,
+      sourceLabel: "Deribit",
+      sourceName: "deribit-duckdb",
+    };
+  } catch {
+    return null;
+  } finally {
+    repo?.close();
+  }
+}
+
+async function getDeribitHealth() {
+  let repo;
+  try {
+    repo = await createDuckDbRepository({ dbPath: getDuckDbPath() });
+    return await repo.getHealth();
+  } catch (error) {
+    return {
+      name: "deribit-duckdb",
+      status: "unavailable",
+      lastSnapshotAt: null,
+      freshnessSeconds: null,
+      dbPath: getDuckDbPath(),
+      instruments: 0,
+      tickers: 0,
+      error: error.message,
+    };
+  } finally {
+    repo?.close();
+  }
 }

@@ -6,6 +6,7 @@ This repository is a runnable V2 prototype with:
 
 - A pure Node.js API for instruments, GEX summary, GEX by strike, term structure, signals, and data health.
 - A GammaFlip-style browser research app for BTC, ETH, SOL, and XRP using deterministic Deribit/Bybit/OKX-style sample option chains.
+- A Deribit public market data collector backed by a local DuckDB file for historical option-chain research.
 - A tested model core for instrument parsing, GEX aggregation, gamma flip, walls, max pain, and signal classification.
 - V2 dashboard widgets: gauges, dual-layer GEX by strike, key levels, 24h trend charts, 3D-style heatmaps, and GEX change table coverage toggles.
 - V2 studio widgets: Now/Expiry/History/Forecast tabs, Snapshot/Day/Hour mode buttons, dual-layer strike chart, summary rail, marker chips, zoom slider, CSV export, and notes.
@@ -32,6 +33,9 @@ cmd /c "set PORT=4174&& npm.cmd start"
 node --test
 npm.cmd run check
 npm.cmd start
+npm.cmd run db:init
+npm.cmd run collect:deribit -- --symbols=BTC,ETH --once
+npm.cmd run inspect:duckdb
 ```
 
 PowerShell may block `npm.ps1`; use `npm.cmd` on Windows.
@@ -55,6 +59,42 @@ GET /api/gex/change-table?symbol=BTC&coverage=50
 ```
 
 The current V2 uses deterministic fixture data, not live exchange collectors. Auth, subscriptions, paid feature gates, and third-party GammaFlip API dependencies are intentionally out of scope.
+
+## Deribit + DuckDB Data Pipeline
+
+The Deribit integration uses public JSON-RPC market data. API keys are not required for the first version because it only reads option-chain instruments and ticker snapshots.
+
+```bash
+npm.cmd run db:init
+npm.cmd run collect:deribit -- --symbols=BTC,ETH --once
+npm.cmd run collect:deribit -- --symbols=BTC,ETH --interval=60000
+npm.cmd run inspect:duckdb
+```
+
+The local database defaults to `.data/gex.duckdb` and is ignored by Git. The collector stores raw Deribit payloads plus normalized fields for instruments, option tickers, index prices, and source-run health. Set `GEX_DB_PATH` to move the database.
+
+Runtime data source selection:
+
+```bash
+cmd /c "set DATA_SOURCE=auto&& npm.cmd start"
+cmd /c "set DATA_SOURCE=deribit&& npm.cmd start"
+cmd /c "set DATA_SOURCE=fixture&& npm.cmd start"
+```
+
+- `fixture`: always use deterministic sample data.
+- `auto`: use the latest DuckDB Deribit snapshot when present, otherwise fall back to fixture data.
+- `deribit`: require DuckDB Deribit data and return an API error when unavailable.
+
+Optional future auth placeholders:
+
+```text
+DERIBIT_ENV=prod|testnet
+DERIBIT_ENDPOINT=https://www.deribit.com/api/v2
+DERIBIT_CLIENT_ID=...
+DERIBIT_CLIENT_SECRET=...
+```
+
+Do not commit `.env` files or local DuckDB databases.
 
 ## GitHub Backup Workflow
 
