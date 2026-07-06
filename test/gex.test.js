@@ -67,6 +67,15 @@ test("parseDeribitInstrumentName reads symbol, expiry, strike, and option type",
   });
 });
 
+test("parseDeribitInstrumentName accepts one-digit expiry days", () => {
+  assert.deepEqual(parseDeribitInstrumentName("BTC-6JUL26-60000-P"), {
+    symbol: "BTC",
+    expiry: "2026-07-06",
+    strike: 60000,
+    optionType: "put",
+  });
+});
+
 test("calculateGexSnapshot aggregates strike, expiry, net gex, walls, and flip level", () => {
   const snapshot = calculateGexSnapshot({
     symbol: "BTC",

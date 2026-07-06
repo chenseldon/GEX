@@ -18,7 +18,7 @@ const MONTHS = new Map([
 export const SUPPORTED_SYMBOLS = ["BTC", "ETH", "SOL", "XRP"];
 
 export function parseDeribitInstrumentName(instrumentName) {
-  const match = /^([A-Z]+)-(\d{2})([A-Z]{3})(\d{2})-(\d+(?:\.\d+)?)-([CP])$/.exec(
+  const match = /^([A-Z]+)-(\d{1,2})([A-Z]{3})(\d{2})-(\d+(?:\.\d+)?)-([CP])$/.exec(
     instrumentName,
   );
 

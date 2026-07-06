@@ -1,7 +1,8 @@
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 
-import { ProxyAgent } from "proxy-agent";
+import { HttpsProxyAgent } from "https-proxy-agent";
+import { SocksProxyAgent } from "socks-proxy-agent";
 
 const PROD_ENDPOINT = "https://www.deribit.com/api/v2";
 const TESTNET_ENDPOINT = "https://test.deribit.com/api/v2";
@@ -114,8 +115,19 @@ export function createDeribitFetch({ proxyUrl, timeoutMs = 10_000 } = {}) {
     };
   }
 
-  const agent = new ProxyAgent(proxyUrl);
+  const agent = createDeribitProxyAgent(proxyUrl);
   return (url, options = {}) => nodeRequest(url, { ...options, agent, timeoutMs });
+}
+
+export function createDeribitProxyAgent(proxyUrl) {
+  const protocol = new URL(proxyUrl).protocol;
+  if (protocol === "http:" || protocol === "https:") {
+    return new HttpsProxyAgent(proxyUrl);
+  }
+  if (protocol === "socks:" || protocol === "socks4:" || protocol === "socks4a:" || protocol === "socks5:" || protocol === "socks5h:") {
+    return new SocksProxyAgent(proxyUrl);
+  }
+  throw new Error(`Unsupported DERIBIT_PROXY_URL protocol: ${protocol}`);
 }
 
 function nodeRequest(url, { method = "GET", headers = {}, body, agent, timeoutMs }) {

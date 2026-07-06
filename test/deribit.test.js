@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 
 import { createApiHandler } from "../src/server/api.js";
-import { createDeribitJsonRpcClient, createDeribitTransportConfig } from "../src/integrations/deribitClient.js";
+import {
+  createDeribitJsonRpcClient,
+  createDeribitProxyAgent,
+  createDeribitTransportConfig,
+} from "../src/integrations/deribitClient.js";
 import { diagnoseDeribitConnectivity } from "../src/integrations/deribitDiagnostics.js";
 import { normalizeDeribitOptionTicker } from "../src/integrations/deribitNormalize.js";
 import {
@@ -54,6 +58,11 @@ test("Deribit client default transport reads DERIBIT_PROXY_URL", () => {
     if (previousEndpoint === undefined) delete process.env.DERIBIT_ENDPOINT;
     else process.env.DERIBIT_ENDPOINT = previousEndpoint;
   }
+});
+
+test("Deribit proxy agent picks concrete agent by proxy protocol", () => {
+  assert.equal(createDeribitProxyAgent("http://127.0.0.1:7897").constructor.name, "HttpsProxyAgent");
+  assert.equal(createDeribitProxyAgent("socks5h://127.0.0.1:7897").constructor.name, "SocksProxyAgent");
 });
 
 test("Deribit diagnostics classify DNS and TCP connectivity failures", async () => {
