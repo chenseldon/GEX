@@ -57,7 +57,7 @@ export function createApiHandler() {
 
     try {
       if (url.pathname === "/api/instruments") {
-        return json({ instruments });
+        return json({ instruments: await getInstrumentList() });
       }
 
       if (url.pathname === "/api/gex/summary") {
@@ -98,12 +98,12 @@ export function createApiHandler() {
           keyLevels: ui.keyLevels,
           rows: snapshot.byStrike,
           expiries: snapshot.byExpiry,
-          trends: buildTrendSeries(snapshot),
+          trends: buildRealTrendSeries(snapshot),
           heatmaps: {
-            net: buildHeatmapMatrix(snapshot, { type: "net" }),
-            abs: buildHeatmapMatrix(snapshot, { type: "abs" }),
+            net: buildRealHeatmapMatrix(snapshot, { type: "net" }),
+            abs: buildRealHeatmapMatrix(snapshot, { type: "abs" }),
           },
-          changeTable: buildChangeTable(snapshot, { coverage: Number(url.searchParams.get("coverage") ?? 50) }),
+          changeTable: buildRealChangeTable(snapshot, { coverage: Number(url.searchParams.get("coverage") ?? 50) }),
         });
       }
 
@@ -132,10 +132,12 @@ export function createApiHandler() {
           ? snapshot.byStrike.filter((row) => row.expiry === expiry)
           : snapshot.byStrike;
         const ui = buildUiMetrics({ ...snapshot, byStrike: rows });
+        const trends = buildRealTrendSeries(snapshot);
         return json({
           symbol: snapshot.symbol,
           spotPrice: snapshot.spotPrice,
           asOf: snapshot.asOf,
+          sourceLabel: snapshot.sourceLabel,
           mode: url.searchParams.get("mode") ?? "snapshot",
           rows,
           expiries: snapshot.byExpiry,
@@ -148,8 +150,9 @@ export function createApiHandler() {
             keyLevels: ui.studioKeyLevels,
           },
           summary: summaryPayload(snapshot, ui),
-          summaryRail: buildSummaryRail({ ...snapshot, byStrike: rows }),
-          trends: buildTrendSeries(snapshot),
+          summaryRail: buildSummaryRail({ ...snapshot, byStrike: rows }, trends),
+          trends,
+          forecast: buildForecastInput(snapshot),
         });
       }
 
@@ -163,18 +166,21 @@ export function createApiHandler() {
 
       if (url.pathname === "/api/gex/trends") {
         const snapshot = await getSnapshot(requiredSymbol(url));
-        return json(buildTrendSeries(snapshot));
+        return json(buildRealTrendSeries(snapshot));
       }
 
       if (url.pathname === "/api/gex/heatmap") {
         const snapshot = await getSnapshot(requiredSymbol(url));
-        return json(buildHeatmapMatrix(snapshot, { type: url.searchParams.get("type") ?? "net" }));
+        return json(buildRealHeatmapMatrix(snapshot, {
+          type: url.searchParams.get("type") ?? "net",
+          window: url.searchParams.get("window") ?? "24h",
+        }));
       }
 
       if (url.pathname === "/api/gex/change-table") {
         const snapshot = await getSnapshot(requiredSymbol(url));
         return json(
-          buildChangeTable(snapshot, {
+          buildRealChangeTable(snapshot, {
             coverage: Number(url.searchParams.get("coverage") ?? 50),
           }),
         );
@@ -270,6 +276,71 @@ function summaryPayload(snapshot, ui) {
   };
 }
 
+function buildForecastInput(snapshot) {
+  const nearestExpiry = snapshot.byExpiry[0]?.expiry;
+  const expiryDate = nearestExpiry ? new Date(`${nearestExpiry}T08:00:00.000Z`) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  const asOfDate = new Date(snapshot.asOf);
+  const dte = Math.max(0.25, (expiryDate.getTime() - asOfDate.getTime()) / (24 * 60 * 60 * 1000));
+  const iv = Math.max(0.01, Number(snapshot.averageImpliedVolatility ?? 0.5));
+  const span = snapshot.spotPrice * Math.max(0.08, Math.min(0.32, iv * Math.sqrt(dte / 365) * 2.8));
+
+  return {
+    symbol: snapshot.symbol,
+    startPrice: round(snapshot.spotPrice, 2),
+    flipPrice: round(snapshot.gammaFlip, 2),
+    iv: round(iv, 4),
+    dte: round(dte, 2),
+    expiryLabel: nearestExpiry ?? "Next expiry",
+    stepLabel: "1h",
+    pathCount: 20000,
+    visiblePathCount: 220,
+    steps: Math.max(24, Math.min(240, Math.round(dte * 24))),
+    yMin: round(Math.max(0.01, snapshot.spotPrice - span), 2),
+    yMax: round(snapshot.spotPrice + span, 2),
+    hoverDefault: round(snapshot.gammaFlip, 2),
+    terminalSkew: round(snapshot.signalState.regime === "negative_gamma" ? -0.53 : -0.18, 2),
+    positiveDrift: 0.0003,
+    negativeDrift: -0.00065,
+    positiveGammaWarp: 0.68,
+    negativeGammaWarp: 1.1,
+    flipPull: 0.012,
+  };
+}
+
+async function getInstrumentList() {
+  const source = process.env.DATA_SOURCE ?? "auto";
+  if (source === "fixture") {
+    return instruments;
+  }
+
+  const deribit = await getDeribitAvailableInstruments();
+  if (deribit.length > 0 || source === "deribit") {
+    return deribit;
+  }
+
+  return instruments;
+}
+
+async function getDeribitAvailableInstruments() {
+  let repo;
+  try {
+    repo = await createDuckDbRepository({ dbPath: getDuckDbPath() });
+    const available = await repo.getAvailableSymbols();
+    const liveSymbols = new Set(available.filter((row) => row.tickerCount > 0).map((row) => row.symbol));
+    return instruments
+      .filter((instrument) => liveSymbols.has(instrument.symbol))
+      .map((instrument) => ({
+        ...instrument,
+        venue: "Deribit",
+        lastSnapshotAt: available.find((row) => row.symbol === instrument.symbol)?.lastSnapshotAt,
+      }));
+  } catch {
+    return [];
+  } finally {
+    repo?.close();
+  }
+}
+
 async function getDeribitSnapshot(symbol) {
   let repo;
   try {
@@ -278,17 +349,215 @@ async function getDeribitSnapshot(symbol) {
     if (!latest || latest.contracts.length === 0) {
       return null;
     }
+    const historyInputs = await repo.getOptionChainHistory(symbol, { hours: 90 * 24, limit: 720 });
+    const historySnapshots = historyInputs
+      .map((input) => safeSnapshot(input))
+      .filter(Boolean);
     const snapshot = calculateGexSnapshot(latest);
     return {
       ...snapshot,
       sourceLabel: "Deribit",
       sourceName: "deribit-duckdb",
+      historySnapshots,
     };
   } catch {
     return null;
   } finally {
     repo?.close();
   }
+}
+
+function safeSnapshot(input) {
+  try {
+    return calculateGexSnapshot(input);
+  } catch {
+    return null;
+  }
+}
+
+function buildRealTrendSeries(snapshot, { hours = 24 } = {}) {
+  if (snapshot.sourceName !== "deribit-duckdb") {
+    return buildTrendSeries(snapshot);
+  }
+
+  const points = historyForWindow(snapshot, hours).map((item) => trendPoint(item));
+  const realPoints = points.length > 0 ? points : [trendPoint(snapshot)];
+
+  return {
+    symbol: snapshot.symbol,
+    asOf: snapshot.asOf,
+    source: "deribit-duckdb",
+    status: realPoints.length >= 2 ? "ready" : "accumulating",
+    warning: realPoints.length >= 2 ? null : "Not enough historical Deribit snapshots yet. Keep the collector running to build this view.",
+    points: realPoints,
+  };
+}
+
+function trendPoint(snapshot) {
+  const ui = buildUiMetrics(snapshot);
+  return {
+    time: new Date(snapshot.asOf).toISOString().slice(11, 16),
+    observedAt: snapshot.asOf,
+    indexPrice: round(snapshot.spotPrice, 2),
+    flipPoint: round(snapshot.gammaFlip, 2),
+    callPut: ui.gauges.callPut,
+    upDown: ui.gauges.upDown,
+    netGex: snapshot.netGex,
+    absGex: ui.absoluteGex,
+    hedgingPressure: round(ui.positiveGex - ui.negativeGex, 2),
+  };
+}
+
+function buildRealHeatmapMatrix(snapshot, { type = "net", window = "24h" } = {}) {
+  if (!["net", "abs"].includes(type)) {
+    throw new Error("type must be net or abs");
+  }
+  if (snapshot.sourceName !== "deribit-duckdb") {
+    return buildHeatmapMatrix(snapshot, { type });
+  }
+
+  const history = historyForWindow(snapshot, windowHours(window));
+  if (history.length < 2) {
+    return {
+      symbol: snapshot.symbol,
+      type,
+      source: "deribit-duckdb",
+      status: "accumulating",
+      warning: "Not enough historical Deribit snapshots yet. Keep the collector running to build this heatmap.",
+      columns: [],
+      rows: [],
+      indexPath: [],
+      flipPath: [],
+    };
+  }
+
+  const collapsedByTime = history.map((item) => ({
+    snapshot: item,
+    rows: collapseByStrike(item.byStrike),
+  }));
+  const latestStrikes = collapsedByTime.at(-1).rows.map((row) => row.strike);
+  const columns = collapsedByTime.map(({ snapshot: item }) => new Date(item.asOf).toISOString().slice(5, 16).replace("T", " "));
+  const rows = latestStrikes.map((strike) => ({
+    strike,
+    values: collapsedByTime.map(({ rows: strikeRows }) => {
+      const row = strikeRows.find((candidate) => candidate.strike === strike);
+      const value = row?.gex ?? 0;
+      return type === "abs" ? Math.abs(value) : value;
+    }),
+  }));
+
+  return {
+    symbol: snapshot.symbol,
+    type,
+    source: "deribit-duckdb",
+    status: "ready",
+    warning: null,
+    columns,
+    rows,
+    indexPath: collapsedByTime.map(({ snapshot: item }) => ({ time: item.asOf, price: item.spotPrice })),
+    flipPath: collapsedByTime.map(({ snapshot: item }) => ({ time: item.asOf, price: item.gammaFlip })),
+  };
+}
+
+function buildRealChangeTable(snapshot, { coverage = 50 } = {}) {
+  if (snapshot.sourceName !== "deribit-duckdb") {
+    return buildChangeTable(snapshot, { coverage });
+  }
+  const allowed = [50, 80, 90, 100];
+  const normalizedCoverage = Number(coverage);
+  if (!allowed.includes(normalizedCoverage)) {
+    throw new Error("coverage must be one of 50, 80, 90, 100");
+  }
+
+  const ranked = collapseByStrike(snapshot.byStrike).sort(
+    (a, b) => Math.abs(b.gex) - Math.abs(a.gex) || a.strike - b.strike,
+  );
+  const count = Math.max(1, Math.ceil(ranked.length * (normalizedCoverage / 100)));
+  const selected = ranked.slice(0, count).sort((a, b) => a.strike - b.strike);
+  const history = historyForWindow(snapshot, 24);
+
+  if (history.length < 2) {
+    return {
+      symbol: snapshot.symbol,
+      coverage: normalizedCoverage,
+      source: "deribit-duckdb",
+      status: "accumulating",
+      warning: "Not enough historical Deribit snapshots yet. Change percentages will appear after another collection point.",
+      columns: selected.map((row) => row.strike),
+      periods: ["Now"],
+      rows: selected.map((row) => ({ strike: row.strike, now: Math.abs(row.gex), changes: {} })),
+    };
+  }
+
+  const previous = new Map(collapseByStrike(history[0].byStrike).map((row) => [row.strike, row]));
+  return {
+    symbol: snapshot.symbol,
+    coverage: normalizedCoverage,
+    source: "deribit-duckdb",
+    status: "ready",
+    warning: null,
+    columns: selected.map((row) => row.strike),
+    periods: ["Now", "24h"],
+    rows: selected.map((row) => {
+      const base = Math.abs(previous.get(row.strike)?.gex ?? 0);
+      const now = Math.abs(row.gex);
+      return {
+        strike: row.strike,
+        now,
+        changes: {
+          "24h": base > 0 ? round(((now - base) / base) * 100, 1) : null,
+        },
+      };
+    }),
+  };
+}
+
+function historyForWindow(snapshot, hours) {
+  const cutoff = Date.now() - hours * 60 * 60 * 1000;
+  const history = Array.isArray(snapshot.historySnapshots) ? snapshot.historySnapshots : [];
+  const filtered = history
+    .filter((item) => new Date(item.asOf).getTime() >= cutoff)
+    .sort((a, b) => new Date(a.asOf) - new Date(b.asOf));
+  if (filtered.length === 0 && snapshot.sourceName === "deribit-duckdb") {
+    return [snapshot];
+  }
+  return filtered;
+}
+
+function windowHours(window) {
+  return {
+    "24h": 24,
+    "3d": 72,
+    "7d": 168,
+    "30d": 720,
+    "90d": 2160,
+  }[String(window).toLowerCase()] ?? 24;
+}
+
+function collapseByStrike(rows) {
+  const groups = new Map();
+  for (const row of rows) {
+    const current = groups.get(row.strike) ?? {
+      strike: row.strike,
+      callGex: 0,
+      putGex: 0,
+      gex: 0,
+      openInterest: 0,
+      volume: 0,
+    };
+    current.callGex += row.callGex;
+    current.putGex += row.putGex;
+    current.gex += row.gex;
+    current.openInterest += row.openInterest;
+    current.volume += row.volume;
+    groups.set(row.strike, current);
+  }
+  return [...groups.values()].sort((a, b) => a.strike - b.strike);
+}
+
+function round(value, decimals = 2) {
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
 }
 
 async function getDeribitHealth() {

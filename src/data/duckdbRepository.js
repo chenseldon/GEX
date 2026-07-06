@@ -166,25 +166,66 @@ export async function createDuckDbRepository({ dbPath = getDuckDbPath() } = {}) 
         return null;
       }
 
-      return {
-        symbol,
-        spotPrice: Number(rows[0].underlying_price),
-        asOf: latest,
-        contracts: rows.map((row) => {
-          const parsed = safeParseInstrument(row.instrument_name);
-          return {
-            instrumentName: row.instrument_name,
-            underlyingPrice: Number(row.underlying_price),
-            strike: Number(row.strike ?? parsed?.strike),
-            expiry: row.expiry ?? parsed?.expiry,
-            optionType: row.option_type ?? parsed?.optionType,
-            impliedVolatility: normalizeIv(Number(row.mark_iv)),
-            openInterest: Number(row.open_interest),
-            volume: Number(row.volume ?? 0),
-            markPrice: Number(row.mark_price ?? 0),
-          };
-        }),
-      };
+      return optionChainFromRows(symbol, latest, rows);
+    },
+
+    async getOptionChainHistory(symbol, { hours = 24, limit = 240 } = {}) {
+      const cutoff = new Date(Date.now() - Number(hours) * 60 * 60 * 1000).toISOString();
+      const observedReader = await connection.runAndReadAll(
+        `select observed_at
+         from (
+           select distinct observed_at
+           from deribit_option_tickers
+           where symbol = $symbol and observed_at >= $cutoff
+           order by observed_at desc
+           limit $limit
+         )
+         order by observed_at asc`,
+        { symbol, cutoff, limit: Number(limit) },
+      );
+      const observedAts = observedReader.getRowObjectsJson().map((row) => row.observed_at);
+      const chains = [];
+
+      for (const observedAt of observedAts) {
+        const reader = await connection.runAndReadAll(
+          `select
+             t.instrument_name,
+             t.observed_at,
+             t.underlying_price,
+             t.open_interest,
+             t.mark_iv,
+             t.mark_price,
+             t.volume,
+             i.expiry,
+             i.strike,
+             i.option_type
+           from deribit_option_tickers t
+           left join deribit_instruments i on i.instrument_name = t.instrument_name
+           where t.symbol = $symbol and t.observed_at = $observed_at
+           order by i.expiry, i.strike, i.option_type`,
+          { symbol, observed_at: observedAt },
+        );
+        const rows = reader.getRowObjectsJson();
+        if (rows.length > 0) {
+          chains.push(optionChainFromRows(symbol, observedAt, rows));
+        }
+      }
+
+      return chains;
+    },
+
+    async getAvailableSymbols() {
+      const reader = await connection.runAndReadAll(
+        `select symbol, max(observed_at) as last_snapshot_at, count(*) as ticker_count
+         from deribit_option_tickers
+         group by symbol
+         order by symbol`,
+      );
+      return reader.getRowObjectsJson().map((row) => ({
+        symbol: row.symbol,
+        lastSnapshotAt: row.last_snapshot_at,
+        tickerCount: Number(row.ticker_count ?? 0),
+      }));
     },
 
     async getHealth() {
@@ -408,4 +449,26 @@ function errorMessage(error) {
     return String(error);
   }
   return error.cause?.message ? `${error.message}: ${error.cause.message}` : error.message;
+}
+
+function optionChainFromRows(symbol, asOf, rows) {
+  return {
+    symbol,
+    spotPrice: Number(rows.find((row) => Number.isFinite(Number(row.underlying_price)))?.underlying_price),
+    asOf,
+    contracts: rows.map((row) => {
+      const parsed = safeParseInstrument(row.instrument_name);
+      return {
+        instrumentName: row.instrument_name,
+        underlyingPrice: Number(row.underlying_price),
+        strike: Number(row.strike ?? parsed?.strike),
+        expiry: row.expiry ?? parsed?.expiry,
+        optionType: row.option_type ?? parsed?.optionType,
+        impliedVolatility: normalizeIv(Number(row.mark_iv)),
+        openInterest: Number(row.open_interest),
+        volume: Number(row.volume ?? 0),
+        markPrice: Number(row.mark_price ?? 0),
+      };
+    }),
+  };
 }

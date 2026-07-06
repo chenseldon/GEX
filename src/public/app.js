@@ -22,6 +22,7 @@ const state = {
   instruments: [],
   dashboard: null,
   studio: null,
+  historyHeatmap: null,
   health: null,
   notes: [
     ["BTC regime watch", "Spot is close to the flip boundary; confirm acceptance before treating resistance as support."],
@@ -211,7 +212,7 @@ function bindEvents() {
     renderLiveState();
   });
 
-  els.categoryTabs.addEventListener("click", (event) => {
+  els.categoryTabs.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-category]");
     if (!button) return;
     state.category = button.dataset.category;
@@ -221,6 +222,7 @@ function bindEvents() {
       state.live = false;
       els.liveToggle.checked = false;
       renderLiveState();
+      await loadHistoryHeatmap();
     }
     renderStudio();
   });
@@ -250,19 +252,21 @@ function bindEvents() {
     renderStudio();
   });
 
-  els.historyWindowTabs.addEventListener("click", (event) => {
+  els.historyWindowTabs.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-history-window]");
     if (!button) return;
     state.historyWindow = button.dataset.historyWindow;
     setActiveButton(els.historyWindowTabs, button);
+    await loadHistoryHeatmap();
     renderStudio();
   });
 
-  els.historyGexTabs.addEventListener("click", (event) => {
+  els.historyGexTabs.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-history-gex]");
     if (!button) return;
     state.historyGexType = button.dataset.historyGex;
     setActiveButton(els.historyGexTabs, button);
+    await loadHistoryHeatmap();
     renderStudio();
   });
 
@@ -399,12 +403,21 @@ async function loadData() {
   state.dashboard = dashboard;
   state.studio = studio;
   state.health = health;
+  if (state.category === "history") {
+    await loadHistoryHeatmap();
+  }
   renderAll();
 }
 
 async function loadStudio() {
   state.studio = await api(
     `/api/gex/studio?symbol=${state.symbol}${state.expiry ? `&expiry=${state.expiry}` : ""}&mode=${state.mode}`,
+  );
+}
+
+async function loadHistoryHeatmap() {
+  state.historyHeatmap = await api(
+    `/api/gex/heatmap?symbol=${state.symbol}&type=${state.historyGexType}&window=${state.historyWindow}`,
   );
 }
 
@@ -509,7 +522,7 @@ function renderDashboard() {
     zoomPct: 100,
   });
   renderKeyLevels(state.dashboard.keyLevels);
-  renderTrends(state.dashboard.trends.points);
+  renderTrends(state.dashboard.trends);
   renderHeatmap(els.netHeatmap, state.dashboard.heatmaps.net);
   renderHeatmap(els.absHeatmap, state.dashboard.heatmaps.abs);
   renderChangeTable(state.dashboard.changeTable);
@@ -729,7 +742,20 @@ function renderKeyLevels(levels) {
   );
 }
 
-function renderTrends(points) {
+function emptyPanel(title, message) {
+  const card = document.createElement("article");
+  card.className = "panel trend-card";
+  card.innerHTML = `<div class="panel-header"><h2>${title}</h2></div><div class="data-warning">${message}</div>`;
+  return card;
+}
+
+function renderTrends(trends) {
+  const points = Array.isArray(trends) ? trends : trends?.points;
+  if (!points?.length) {
+    els.trendGrid.replaceChildren(emptyPanel("24 hour GEX trends", "Not enough real Deribit snapshots yet. Keep the collector running."));
+    return;
+  }
+  const warning = trends?.warning ? [emptyPanel("24 hour GEX trends", trends.warning)] : [];
   const charts = [
     ["GEX Call/Put (24h)", "callPut", "#d08a21"],
     ["GEX Up/Down (24h)", "upDown", "#8d4dff"],
@@ -737,6 +763,7 @@ function renderTrends(points) {
     ["Abs GEX (24h)", "absGex", "#31c46b"],
   ];
   els.trendGrid.replaceChildren(
+    ...warning,
     ...charts.map(([title, field, color]) => {
       const card = document.createElement("article");
       card.className = "panel trend-card";
@@ -750,6 +777,15 @@ function renderTrends(points) {
 }
 
 function renderHeatmap(container, heatmap) {
+  if (!heatmap?.rows?.length) {
+    container.replaceChildren();
+    container.style.removeProperty("--heatmap-cols");
+    const empty = document.createElement("div");
+    empty.className = "data-warning";
+    empty.textContent = heatmap?.warning ?? "Not enough real Deribit snapshots yet.";
+    container.append(empty);
+    return;
+  }
   const values = heatmap.rows.flatMap((row) => row.values);
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -775,6 +811,13 @@ function renderHeatmap(container, heatmap) {
 }
 
 function renderChangeTable(table) {
+  if (table.warning) {
+    const warning = `<div class="data-warning">${table.warning}</div>`;
+    if (!table.rows?.length) {
+      els.changeTable.innerHTML = warning;
+      return;
+    }
+  }
   const periods = table.periods;
   const rows = periods
     .map((period) => {
@@ -782,7 +825,8 @@ function renderChangeTable(table) {
         .map((row) => {
           const value = period === "Now" ? row.now : row.changes[period];
           const className = period === "Now" ? "now-cell" : value >= 0 ? "positive-cell" : "negative-cell";
-          return `<td class="${className}">${period === "Now" ? money(value) : `${value > 0 ? "+" : ""}${value}%`}</td>`;
+          const display = value === null || value === undefined ? "n/a" : period === "Now" ? money(value) : `${value > 0 ? "+" : ""}${value}%`;
+          return `<td class="${className}">${display}</td>`;
         })
         .join("");
       return `<tr><th>${period}</th>${cells}</tr>`;
@@ -790,6 +834,7 @@ function renderChangeTable(table) {
     .join("");
   const headers = table.rows.map((row) => `<th>${price(row.strike)}</th>`).join("");
   els.changeTable.innerHTML = `
+    ${table.warning ? `<div class="data-warning compact">${table.warning}</div>` : ""}
     <table class="change-table">
       <thead><tr><th></th>${headers}</tr></thead>
       <tbody>${rows}</tbody>
@@ -933,6 +978,7 @@ function resolveForecastInput() {
   return {
     ...defaultForecastInput,
     symbol: state.symbol,
+    ...(state.studio?.forecast || {}),
     ...(live || {}),
   };
 }
@@ -986,7 +1032,7 @@ function forecastPath(startPrice, flipPrice, iv, dte, steps, seed, input = defau
     const pullToFlip = -distanceToFlip * input.flipPull;
     const shock = iv * Math.sqrt(dt) * z * gammaWarp;
     priceValue *= Math.exp(drift + pullToFlip + shock);
-    priceValue = clamp(priceValue, 60000, 89500);
+    priceValue = clamp(priceValue, input.yMin, input.yMax);
     values.push(priceValue);
   }
   return values;
@@ -1004,8 +1050,8 @@ function renderForecastMonteCarloChart(svg, data) {
   const densityLeft = 952;
   const densityRight = 1110;
   const chartBottom = height - pad.bottom;
-  const yTicks = [65000, 70000, 75000, 80000, 85000];
-  const dateTicks = ["May 22", "May 23", "May 24", "May 25", "May 26", "May 27", "May 28", "May 29"];
+  const yTicks = priceTickSeries(data.yMin, data.yMax, 5);
+  const dateTicks = forecastDateTicks(data);
 
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.replaceChildren();
@@ -1017,7 +1063,7 @@ function renderForecastMonteCarloChart(svg, data) {
   yTicks.forEach((tick) => {
     const yPos = y(tick);
     line(svg, pad.left, yPos, densityRight, yPos, "#1e2b29", "", "forecast-grid-line");
-    const tickLabel = label(svg, pad.left - 12, yPos + 5, `${Math.round(tick / 1000)}k`, "forecast-axis-label");
+    const tickLabel = label(svg, pad.left - 12, yPos + 5, formatForecastAxis(tick), "forecast-axis-label");
     tickLabel.setAttribute("text-anchor", "end");
   });
   dateTicks.forEach((tick, index) => {
@@ -1113,6 +1159,20 @@ function renderForecastTelemetry(svg, data, x, y) {
   ].forEach((text, index) => label(svg, x + 8, y + 16 + index * 15, text, "forecast-telemetry"));
 }
 
+function forecastDateTicks(data) {
+  const asOf = state.studio?.asOf ? new Date(state.studio.asOf) : new Date();
+  return Array.from({ length: 8 }, (_, index) => {
+    const date = new Date(asOf.getTime() + (data.dte * index / 7) * 24 * 60 * 60 * 1000);
+    return date.toLocaleString("en", { month: "short", day: "2-digit", timeZone: "UTC" });
+  });
+}
+
+function formatForecastAxis(value) {
+  if (Math.abs(value) >= 10_000) return `${Math.round(value / 1000)}k`;
+  if (Math.abs(value) >= 1_000) return `${(value / 1000).toFixed(1)}k`;
+  return price(value);
+}
+
 function forecastPriceFromPointer(event) {
   const rectBox = els.studioStrikeChart.getBoundingClientRect();
   const data = monteCarloForecastData();
@@ -1160,6 +1220,26 @@ function stddev(values) {
 }
 
 function historyHeatmapData(windowKey, gexType) {
+  if (state.historyHeatmap?.status === "ready") {
+    return historyHeatmapFromApi(state.historyHeatmap, gexType);
+  }
+  return {
+    status: "accumulating",
+    warning: state.historyHeatmap?.warning ?? "Not enough real Deribit snapshots yet. Keep the collector running to build this history view.",
+    rangeLabel: "Not enough historical snapshots",
+    gexType,
+    columns: 0,
+    rows: 0,
+    yMin: state.studio?.spotPrice ? state.studio.spotPrice * 0.94 : 0,
+    yMax: state.studio?.spotPrice ? state.studio.spotPrice * 1.06 : 1,
+    xLabels: [],
+    priceTicks: [],
+    scale: { min: 0, max: 1, ticks: [0] },
+    priceSeries: [],
+    flipSeries: [],
+    values: [],
+  };
+
   const configs = {
     "24h": {
       columns: 96,
@@ -1225,6 +1305,58 @@ function historyHeatmapData(windowKey, gexType) {
   );
   const scale = gexType === "abs" ? { min: 0, max: Math.max(Math.abs(config.scale.min), config.scale.max), ticks: [0, 5, 10, 15, 20, 30, 40].filter((tick) => tick <= Math.max(Math.abs(config.scale.min), config.scale.max)) } : config.scale;
   return { ...config, gexType, strikes, time, priceSeries, flipSeries, values, scale };
+}
+
+function historyHeatmapFromApi(payload, gexType) {
+  const strikes = payload.rows.map((row) => row.strike);
+  const values = payload.rows.map((row) => row.values.map((value) => value / 1_000_000));
+  const flatValues = values.flat();
+  const minValue = Math.min(...flatValues, 0);
+  const maxValue = Math.max(...flatValues, 1);
+  const yMin = Math.min(...strikes);
+  const yMax = Math.max(...strikes);
+  const columns = payload.columns.length;
+  const xLabels = sampleLabels(payload.columns, 12);
+  const priceTicks = priceTickSeries(yMin, yMax, 7);
+  const scale = gexType === "abs"
+    ? { min: 0, max: Math.max(maxValue, 1), ticks: scaleTicks(0, Math.max(maxValue, 1), 6) }
+    : { min: minValue, max: maxValue, ticks: scaleTicks(minValue, maxValue, 7) };
+
+  return {
+    status: "ready",
+    warning: null,
+    gexType,
+    columns,
+    rows: payload.rows.length,
+    yMin,
+    yMax,
+    rangeLabel: `${payload.columns[0]} - ${payload.columns.at(-1)}`,
+    xLabels,
+    priceTicks,
+    scale,
+    priceSeries: payload.indexPath.map((point) => point.price),
+    flipSeries: payload.flipPath.map((point) => point.price),
+    values,
+    symbol: payload.symbol,
+  };
+}
+
+function sampleLabels(labels, maxCount) {
+  if (labels.length <= maxCount) {
+    return labels.map((labelText) => labelText.replace(" ", "\n"));
+  }
+  const step = (labels.length - 1) / (maxCount - 1);
+  return Array.from({ length: maxCount }, (_, index) => labels[Math.round(index * step)].replace(" ", "\n"));
+}
+
+function priceTickSeries(min, max, count) {
+  const step = (max - min) / Math.max(count - 1, 1);
+  return Array.from({ length: count }, (_, index) => min + step * index);
+}
+
+function scaleTicks(min, max, count) {
+  const step = (max - min) / Math.max(count - 1, 1);
+  return Array.from({ length: count }, (_, index) => Math.round((min + step * index) * 10) / 10);
 }
 
 function historyPrice(config, windowKey, t, index) {
@@ -1365,6 +1497,16 @@ function renderHistoryHeatmapChart(svg, data) {
   const width = 1120;
   const height = 700;
   const pad = { top: 22, right: 74, bottom: 112, left: 90 };
+  if (data.status !== "ready") {
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    svg.replaceChildren();
+    rect(svg, 0, 0, width, height, "#080d11", 0, "history-empty-bg");
+    rect(svg, 70, 58, width - 140, height - 160, "rgba(20, 33, 44, 0.72)", 8, "history-empty-panel");
+    label(svg, 104, 128, "History is accumulating", "empty-title");
+    label(svg, 104, 168, data.warning, "empty-message");
+    label(svg, 104, 210, "Run collect:deribit on an interval to build 24H / 3D / 7D / 30D / 90D heatmaps from real snapshots.", "empty-message");
+    return;
+  }
   const chartWidth = width - pad.left - pad.right;
   const chartHeight = height - pad.top - pad.bottom;
   const cellWidth = chartWidth / data.columns;
@@ -1475,6 +1617,7 @@ function gaussian(value, center, width) {
 }
 
 function expiryBuckets() {
+  return realExpiryBuckets();
   const labels = ["Σ All", "3JUL26", "4JUL26", "5JUL26", "6JUL26", "10JUL26", "17JUL26", "24JUL26"];
   const dte = [-1, 0, 1, 2, 6, 13, 20, 27];
   const oi = [27e9, 2.7e9, 321e6, 115e6, 76e6, 1.5e9, 949e6, 68e6];
@@ -1505,24 +1648,94 @@ function expiryBuckets() {
   }));
 }
 
+function realExpiryBuckets() {
+  const rows = state.studio?.rows ?? [];
+  const asOf = new Date(state.studio?.asOf ?? Date.now());
+  const expiryGroups = new Map();
+  for (const row of rows) {
+    if (!expiryGroups.has(row.expiry)) expiryGroups.set(row.expiry, []);
+    expiryGroups.get(row.expiry).push(row);
+  }
+  const eligible = [...expiryGroups.entries()]
+    .map(([expiry, expiryRows]) => ({
+      expiry,
+      rows: expiryRows,
+      dte: Math.round((new Date(`${expiry}T00:00:00Z`) - asOf) / 86400000),
+    }))
+    .filter((item) => item.dte <= state.maxDte)
+    .sort((a, b) => a.expiry.localeCompare(b.expiry));
+  const scopedRows = eligible.flatMap((item) => item.rows);
+
+  return [
+    buildExpiryBucket("All", scopedRows, -1),
+    ...eligible.map((item) => buildExpiryBucket(formatExpiryCode(item.expiry), item.rows, item.dte)),
+  ].filter((bucket) => bucket.rows.length > 0);
+}
+
+function buildExpiryBucket(labelText, rows, dte) {
+  const callAbs = rows.reduce((sum, row) => sum + Math.abs(row.callGex), 0);
+  const putAbs = rows.reduce((sum, row) => sum + Math.abs(row.putGex), 0);
+  const gexNet = rows.reduce((sum, row) => sum + row.gex, 0);
+  const gexAbs = rows.reduce((sum, row) => sum + Math.abs(row.gex), 0);
+  const oi = rows.reduce((sum, row) => sum + row.openInterest * state.studio.spotPrice, 0);
+  const aboveAbs = rows.filter((row) => row.strike >= state.studio.spotPrice).reduce((sum, row) => sum + Math.abs(row.gex), 0);
+  const belowAbs = rows.filter((row) => row.strike < state.studio.spotPrice).reduce((sum, row) => sum + Math.abs(row.gex), 0);
+  const positive = rows.filter((row) => row.gex >= 0).sort((a, b) => b.gex - a.gex);
+  const negative = rows.filter((row) => row.gex < 0).sort((a, b) => Math.abs(b.gex) - Math.abs(a.gex));
+
+  return {
+    label: labelText,
+    dte,
+    rows,
+    oi,
+    gexAbs,
+    gexNet,
+    pcRatio: putAbs / Math.max(callAbs, 1),
+    gexCp: ratioForChart(callAbs, putAbs),
+    gexUd: ratioForChart(aboveAbs, belowAbs),
+    deribit: 1,
+    okx: 0,
+    bybit: 0,
+    rrDeribit: null,
+    rrOkx: null,
+    rrBybit: null,
+    levels: {
+      upperHigh: positive[0]?.strike,
+      upperLow: positive[1]?.strike ?? positive[0]?.strike,
+      lowerHigh: negative[1]?.strike ?? negative[0]?.strike,
+      lowerLow: negative[0]?.strike,
+    },
+  };
+}
+
+function ratioForChart(positive, negative) {
+  return (positive - negative) / Math.max(positive + negative, 1);
+}
+
 function renderExpiryLevelsChart(svg, buckets, spotPrice) {
   const width = 1120;
   const height = 640;
   const pad = { top: 26, right: 28, bottom: 58, left: 86 };
   const chartBottom = height - pad.bottom;
+  if (!buckets.length) {
+    renderSvgWarning(svg, width, height, "No expiry data", "No Deribit option-chain rows are available for the selected max DTE.");
+    return;
+  }
   const labels = buckets.map((bucket) => bucket.label);
-  const upperHigh = [63000, 62000, 62000, 63000, 63000, 64000, 66000, 68000];
-  const upperLow = [62000, 61500, 61500, 62000, 62500, 63000, 64000, 66000];
-  const lowerHigh = [60000, 61000, 59000, 60000, 60500, 58000, 60000, 61000];
-  const lowerLow = [56000, 61000, 58500, 59000, 59500, 56000, 56000, 60000];
-  const yMin = 55200;
-  const yMax = 68800;
+  const upperHigh = buckets.map((bucket) => bucket.levels.upperHigh ?? spotPrice);
+  const upperLow = buckets.map((bucket) => bucket.levels.upperLow ?? bucket.levels.upperHigh ?? spotPrice);
+  const lowerHigh = buckets.map((bucket) => bucket.levels.lowerHigh ?? bucket.levels.lowerLow ?? spotPrice);
+  const lowerLow = buckets.map((bucket) => bucket.levels.lowerLow ?? spotPrice);
+  const allLevels = [spotPrice, ...upperHigh, ...upperLow, ...lowerHigh, ...lowerLow];
+  const span = Math.max(...allLevels) - Math.min(...allLevels);
+  const yMin = Math.min(...allLevels) - Math.max(span * 0.12, spotPrice * 0.015);
+  const yMax = Math.max(...allLevels) + Math.max(span * 0.12, spotPrice * 0.015);
   const xStep = (width - pad.left - pad.right) / Math.max(labels.length - 1, 1);
 
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.replaceChildren();
   rect(svg, pad.left, pad.top, width - pad.left - pad.right, chartBottom - pad.top, "#0c1219", 0, "expiry-chart-bg");
-  drawExpiryGrid(svg, width, height, pad, [56000, 58000, 60000, 62000, 64000, 66000, 68000], yMin, yMax);
+  drawExpiryGrid(svg, width, height, pad, priceTickSeries(yMin, yMax, 7), yMin, yMax);
   drawBand(upperLow, upperHigh, "#008000", "expiry-positive-band");
   drawBand(lowerLow, lowerHigh, "#ff174d", "expiry-negative-band");
   drawLineWithPoints(upperHigh, "#008000");
@@ -1578,6 +1791,10 @@ function renderExpiryPositioningChart(svg, buckets, metric) {
 function renderExpiryStackedBarChart(svg, buckets, metric) {
   const width = 1120;
   const height = 640;
+  if (!buckets.length) {
+    renderSvgWarning(svg, width, height, "No expiry data", "No Deribit option-chain rows are available for the selected max DTE.");
+    return;
+  }
   const pad = { top: 58, right: 28, bottom: 58, left: 86 };
   const chartBottom = height - pad.bottom;
   const values = buckets.map((bucket) => Math.abs(bucket[metric]));
@@ -1644,6 +1861,10 @@ function renderExpiryStackedBarChart(svg, buckets, metric) {
 function renderExpiryRatioChart(svg, buckets, metric) {
   const width = 1120;
   const height = 640;
+  if (!buckets.length) {
+    renderSvgWarning(svg, width, height, "No expiry data", "No Deribit option-chain rows are available for the selected max DTE.");
+    return;
+  }
   const pad = { top: 58, right: 28, bottom: 58, left: 86 };
   const chartBottom = height - pad.bottom;
   const values = buckets.map((bucket) => bucket[metric]);
@@ -1678,6 +1899,10 @@ function renderExpiryRatioChart(svg, buckets, metric) {
 function renderExpiryRiskReversalChart(svg, buckets) {
   const width = 1120;
   const height = 640;
+  if (!buckets.length || buckets.every((bucket) => !Number.isFinite(bucket.rrDeribit))) {
+    renderSvgWarning(svg, width, height, "25 Delta RR unavailable", "The current DuckDB GEX cache does not store per-expiry 25-delta IV surface points yet.");
+    return;
+  }
   const pad = { top: 58, right: 28, bottom: 58, left: 86 };
   const chartBottom = height - pad.bottom;
   const domain = { min: -9.5, max: 9.2, ticks: [-8, -6, -4, -2, 0, 2, 4, 6, 8] };
@@ -2003,6 +2228,10 @@ function renderDualStrikeChart(
 
 function renderLineChart(svg, series, color, width, height) {
   svg.replaceChildren();
+  if (!series.length) {
+    renderSvgWarning(svg, width, height, "No chart data", "Not enough real snapshots are available yet.");
+    return;
+  }
   const pad = { top: 16, right: 16, bottom: 22, left: 38 };
   const values = series.map((point) => point.y);
   const min = Math.min(...values);
@@ -2016,6 +2245,15 @@ function renderLineChart(svg, series, color, width, height) {
   line(svg, pad.left, height - pad.bottom, width - pad.right, height - pad.bottom, "#27313d", "3 5", "grid-line");
   path(svg, areaPath, colorToArea(color), "transparent", 0);
   path(svg, linePath, "none", color, 2.5);
+}
+
+function renderSvgWarning(svg, width, height, title, message) {
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.replaceChildren();
+  rect(svg, 0, 0, width, height, "#081018", 0, "svg-warning-bg");
+  rect(svg, 44, 44, width - 88, height - 88, "rgba(17, 32, 47, 0.82)", 8, "svg-warning-panel");
+  label(svg, 74, 104, title, "empty-title");
+  label(svg, 74, 142, message, "empty-message");
 }
 
 function setPage(page) {

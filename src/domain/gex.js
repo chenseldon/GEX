@@ -64,6 +64,10 @@ export function calculateGexSnapshot({ symbol, spotPrice, asOf, contracts }) {
     (sum, contract) => sum + contract.openInterest,
     0,
   );
+  const averageImpliedVolatility = normalized.reduce(
+    (sum, contract) => sum + contract.impliedVolatility * contract.openInterest,
+    0,
+  ) / Math.max(totalOpenInterest, 1);
   const netGex = byStrike.reduce((sum, row) => sum + row.gex, 0);
   const netDelta = normalized.reduce((sum, contract) => sum + contract.netDelta, 0);
   const callWall = largestOpenInterestStrike(normalized, "call");
@@ -78,6 +82,7 @@ export function calculateGexSnapshot({ symbol, spotPrice, asOf, contracts }) {
     netGex: round(netGex, 2),
     netDelta: round(netDelta, 2),
     totalOpenInterest,
+    averageImpliedVolatility: round(averageImpliedVolatility, 4),
     gammaFlip,
     callWall,
     putWall,
@@ -214,9 +219,9 @@ export function buildChangeTable(snapshot, { coverage = 50 } = {}) {
   };
 }
 
-export function buildSummaryRail(snapshot) {
+export function buildSummaryRail(snapshot, trendSeries = buildTrendSeries(snapshot)) {
   const ui = buildUiMetrics(snapshot);
-  const trends = buildTrendSeries(snapshot).points;
+  const trends = trendSeries.points;
 
   return [
     {

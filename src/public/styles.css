@@ -957,6 +957,31 @@ body[data-page="studio"] .rail-card {
   font-weight: 900;
 }
 
+.data-warning {
+  color: #f4c96b;
+  border: 1px solid rgba(244, 201, 107, 0.28);
+  background: rgba(244, 201, 107, 0.08);
+  border-radius: 8px;
+  padding: 12px 14px;
+  line-height: 1.45;
+}
+
+.data-warning.compact {
+  margin-bottom: 10px;
+}
+
+.empty-title {
+  fill: #e8edf6;
+  font-size: 28px;
+  font-weight: 800;
+}
+
+.empty-message {
+  fill: #f4c96b;
+  font-size: 16px;
+  font-weight: 650;
+}
+
 body[data-page="studio"] .rail-value {
   margin: 0.35rem 0 0;
   font-size: 1.28rem;
