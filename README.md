@@ -34,6 +34,7 @@ node --test
 npm.cmd run check
 npm.cmd start
 npm.cmd run db:init
+npm.cmd run diagnose:deribit
 npm.cmd run collect:deribit -- --symbols=BTC,ETH --once
 npm.cmd run inspect:duckdb
 ```
@@ -66,6 +67,7 @@ The Deribit integration uses public JSON-RPC market data. API keys are not requi
 
 ```bash
 npm.cmd run db:init
+npm.cmd run diagnose:deribit
 npm.cmd run collect:deribit -- --symbols=BTC,ETH --once
 npm.cmd run collect:deribit -- --symbols=BTC,ETH --interval=60000
 npm.cmd run inspect:duckdb
@@ -90,8 +92,26 @@ Optional future auth placeholders:
 ```text
 DERIBIT_ENV=prod|testnet
 DERIBIT_ENDPOINT=https://www.deribit.com/api/v2
+DERIBIT_PROXY_URL=socks5h://127.0.0.1:7890
 DERIBIT_CLIENT_ID=...
 DERIBIT_CLIENT_SECRET=...
+```
+
+`DERIBIT_ENDPOINT` can be set to `https://rest.deribit.com/api/v2` for compatibility testing, but the official default remains `https://www.deribit.com/api/v2`.
+
+If the browser can open Deribit but command-line collection times out, run:
+
+```bash
+npm.cmd run diagnose:deribit
+cmd /c "set DERIBIT_PROXY_URL=socks5h://127.0.0.1:7890&& npm.cmd run diagnose:deribit"
+cmd /c "set DERIBIT_ENDPOINT=https://rest.deribit.com/api/v2&& npm.cmd run diagnose:deribit"
+```
+
+The Python probe is available for comparing Python network behavior and exporting a CSV instrument list:
+
+```bash
+pip install requests
+python scripts/deribit_probe.py --symbol BTC --csv output/deribit_btc_options_list.csv
 ```
 
 Do not commit `.env` files or local DuckDB databases.

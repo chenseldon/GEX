@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 
 import { createApiHandler } from "../src/server/api.js";
-import { createDeribitJsonRpcClient } from "../src/integrations/deribitClient.js";
+import { createDeribitJsonRpcClient, createDeribitTransportConfig } from "../src/integrations/deribitClient.js";
+import { diagnoseDeribitConnectivity } from "../src/integrations/deribitDiagnostics.js";
 import { normalizeDeribitOptionTicker } from "../src/integrations/deribitNormalize.js";
 import {
   createDuckDbRepository,
@@ -34,6 +35,66 @@ test("Deribit JSON-RPC client posts method and params", async () => {
   assert.equal(calls[0].body.method, "public/get_instruments");
   assert.equal(calls[0].body.params.currency, "BTC");
   assert.deepEqual(result, [{ instrument_name: "BTC-26JUL24-60000-C" }]);
+});
+
+test("Deribit client default transport reads DERIBIT_PROXY_URL", () => {
+  const previousProxy = process.env.DERIBIT_PROXY_URL;
+  const previousEndpoint = process.env.DERIBIT_ENDPOINT;
+
+  try {
+    process.env.DERIBIT_PROXY_URL = "socks5h://127.0.0.1:7890";
+    process.env.DERIBIT_ENDPOINT = "https://rest.deribit.com/api/v2";
+    const config = createDeribitTransportConfig();
+
+    assert.equal(config.endpoint, "https://rest.deribit.com/api/v2");
+    assert.equal(config.proxyUrl, "socks5h://127.0.0.1:7890");
+  } finally {
+    if (previousProxy === undefined) delete process.env.DERIBIT_PROXY_URL;
+    else process.env.DERIBIT_PROXY_URL = previousProxy;
+    if (previousEndpoint === undefined) delete process.env.DERIBIT_ENDPOINT;
+    else process.env.DERIBIT_ENDPOINT = previousEndpoint;
+  }
+});
+
+test("Deribit diagnostics classify DNS and TCP connectivity failures", async () => {
+  const report = await diagnoseDeribitConnectivity({
+    endpoint: "https://www.deribit.com/api/v2",
+    symbol: "BTC",
+    lookupHost: async () => [{ address: "104.244.46.185", family: 4 }],
+    tcpProbe: async () => ({ ok: false, error: "connect timeout" }),
+    client: {
+      call: async () => {
+        throw new Error("should not call HTTP when TCP fails");
+      },
+    },
+  });
+
+  assert.equal(report.summary, "connect_timeout");
+  assert.equal(report.checks.dns.status, "ok");
+  assert.equal(report.checks.tcp.status, "failed");
+  assert.equal(report.checks.getTime.status, "skipped");
+});
+
+test("Deribit diagnostics checks public get_time and instruments when transport works", async () => {
+  const methods = [];
+  const report = await diagnoseDeribitConnectivity({
+    endpoint: "https://www.deribit.com/api/v2",
+    symbol: "BTC",
+    lookupHost: async () => [{ address: "1.2.3.4", family: 4 }],
+    tcpProbe: async () => ({ ok: true }),
+    client: {
+      call: async (method) => {
+        methods.push(method);
+        if (method === "public/get_time") return 1783300000000;
+        return [{ instrument_name: "BTC-26JUL24-60000-C" }];
+      },
+    },
+  });
+
+  assert.equal(report.summary, "ok");
+  assert.deepEqual(methods, ["public/get_time", "public/get_instruments"]);
+  assert.equal(report.checks.getTime.status, "ok");
+  assert.equal(report.checks.getInstruments.count, 1);
 });
 
 test("Deribit ticker normalization converts API payload into GEX contract shape", () => {
@@ -159,6 +220,24 @@ test("DuckDB repository records failed Deribit collection runs for data health",
     assert.equal(health.status, "unavailable");
     assert.equal(health.lastStatus, "error");
     assert.match(health.error, /Connect Timeout/);
+    await repo.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("DuckDB schema includes historical research tables", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-duckdb-history-"));
+  const dbPath = join(dir, "gex.duckdb");
+
+  try {
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    const tables = await repo.getTableNames();
+
+    assert.equal(tables.includes("deribit_option_candles"), true);
+    assert.equal(tables.includes("deribit_trades"), true);
+    assert.equal(tables.includes("deribit_historical_volatility"), true);
     await repo.close();
   } finally {
     await rm(dir, { recursive: true, force: true });

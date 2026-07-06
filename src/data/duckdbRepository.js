@@ -215,6 +215,16 @@ export async function createDuckDbRepository({ dbPath = getDuckDbPath() } = {}) 
       };
     },
 
+    async getTableNames() {
+      const reader = await connection.runAndReadAll(`
+        select table_name
+        from information_schema.tables
+        where table_schema = 'main'
+        order by table_name
+      `);
+      return reader.getRowObjectsJson().map((row) => row.table_name);
+    },
+
     close() {
       connection.closeSync();
     },
@@ -315,6 +325,51 @@ async function runSchema(connection) {
       net_gex double,
       open_interest double,
       gamma double
+    )
+  `);
+
+  await connection.run(`
+    create table if not exists deribit_option_candles (
+      instrument_name varchar,
+      resolution varchar,
+      open_time bigint,
+      open_time_iso varchar,
+      open double,
+      high double,
+      low double,
+      close double,
+      volume double,
+      cost double,
+      source_method varchar,
+      raw_json varchar,
+      primary key (instrument_name, resolution, open_time)
+    )
+  `);
+
+  await connection.run(`
+    create table if not exists deribit_trades (
+      trade_id varchar primary key,
+      instrument_name varchar,
+      timestamp bigint,
+      timestamp_iso varchar,
+      price double,
+      amount double,
+      direction varchar,
+      tick_direction integer,
+      index_price double,
+      iv double,
+      raw_json varchar
+    )
+  `);
+
+  await connection.run(`
+    create table if not exists deribit_historical_volatility (
+      currency varchar,
+      timestamp bigint,
+      timestamp_iso varchar,
+      volatility double,
+      raw_json varchar,
+      primary key (currency, timestamp)
     )
   `);
 }
