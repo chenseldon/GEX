@@ -39,7 +39,7 @@ export function createApiHandler() {
   }
 
   async function getSnapshot(symbol) {
-    const source = process.env.DATA_SOURCE ?? "fixture";
+    const source = process.env.DATA_SOURCE ?? "auto";
     if (source === "deribit" || source === "auto") {
       const deribit = await getDeribitSnapshot(symbol);
       if (deribit) {

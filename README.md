@@ -84,8 +84,10 @@ cmd /c "set DATA_SOURCE=fixture&& npm.cmd start"
 ```
 
 - `fixture`: always use deterministic sample data.
-- `auto`: use the latest DuckDB Deribit snapshot when present, otherwise fall back to fixture data.
+- `auto`: default mode; use the latest DuckDB Deribit snapshot when present, otherwise fall back to fixture data.
 - `deribit`: require DuckDB Deribit data and return an API error when unavailable.
+
+Deribit currently provides BTC and ETH option chains in this pipeline. If a symbol such as SOL has no Deribit option instruments, the app falls back to fixture data until another venue connector is added.
 
 Optional future auth placeholders:
 

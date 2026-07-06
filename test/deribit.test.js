@@ -312,6 +312,65 @@ test("API auto source uses DuckDB latest Deribit snapshot when available", async
   }
 });
 
+test("API default source prefers DuckDB latest Deribit snapshot", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-api-default-duckdb-"));
+  const dbPath = join(dir, "gex.duckdb");
+  const previousSource = process.env.DATA_SOURCE;
+  const previousDbPath = process.env.GEX_DB_PATH;
+
+  try {
+    delete process.env.DATA_SOURCE;
+    process.env.GEX_DB_PATH = dbPath;
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    await repo.insertDeribitSnapshot({
+      symbol: "ETH",
+      observedAt,
+      instruments: [
+        {
+          instrument_name: "ETH-26JUL24-3500-C",
+          currency: "ETH",
+          kind: "option",
+          strike: 3500,
+          option_type: "call",
+          expiration_timestamp: Date.UTC(2024, 6, 26, 8),
+          is_active: true,
+        },
+        {
+          instrument_name: "ETH-26JUL24-3500-P",
+          currency: "ETH",
+          kind: "option",
+          strike: 3500,
+          option_type: "put",
+          expiration_timestamp: Date.UTC(2024, 6, 26, 8),
+          is_active: true,
+        },
+      ],
+      tickers: [
+        ticker("ETH-26JUL24-3500-C", 3600, 70, 100),
+        ticker("ETH-26JUL24-3500-P", 3600, 72, 140),
+      ],
+      warnings: [],
+    });
+    await repo.close();
+
+    const handler = createApiHandler();
+    const response = await handler(new Request("http://localhost/api/gex/dashboard?symbol=ETH"));
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(payload.sourceLabel, "Deribit");
+    assert.equal(payload.asOf, observedAt);
+    assert.equal(payload.spotPrice, 3600);
+  } finally {
+    if (previousSource === undefined) delete process.env.DATA_SOURCE;
+    else process.env.DATA_SOURCE = previousSource;
+    if (previousDbPath === undefined) delete process.env.GEX_DB_PATH;
+    else process.env.GEX_DB_PATH = previousDbPath;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 function ticker(instrumentName, underlyingPrice, markIv, openInterest) {
   return {
     instrumentName,

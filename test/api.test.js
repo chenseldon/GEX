@@ -4,8 +4,15 @@ import test from "node:test";
 import { createApiHandler } from "../src/server/api.js";
 
 async function request(path) {
+  const previousSource = process.env.DATA_SOURCE;
+  process.env.DATA_SOURCE = "fixture";
   const handler = createApiHandler();
-  return handler(new Request(`http://localhost${path}`));
+  try {
+    return await handler(new Request(`http://localhost${path}`));
+  } finally {
+    if (previousSource === undefined) delete process.env.DATA_SOURCE;
+    else process.env.DATA_SOURCE = previousSource;
+  }
 }
 
 test("GET /api/instruments returns supported crypto option symbols", async () => {
