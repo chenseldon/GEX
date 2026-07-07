@@ -1001,6 +1001,57 @@ body[data-page="studio"] .rail-card svg {
   padding: 0.65rem;
 }
 
+.marker-guide {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(8, 16, 25, 0.55);
+  padding: 0.45rem 0.55rem;
+  margin: 0.45rem 0;
+}
+
+.marker-guide summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.marker-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin-top: 0.55rem;
+}
+
+.marker-guide article {
+  border-radius: 8px;
+  padding: 0.55rem;
+  color: var(--muted);
+  background: rgba(14, 30, 45, 0.68);
+}
+
+.marker-guide article.negative {
+  border: 1px solid rgba(255, 91, 111, 0.35);
+}
+
+.marker-guide article.neutral {
+  border: 1px solid rgba(155, 92, 255, 0.35);
+}
+
+.marker-guide article.positive {
+  border: 1px solid rgba(47, 207, 111, 0.35);
+}
+
+.marker-guide strong {
+  display: block;
+  color: var(--text);
+  margin-bottom: 0.35rem;
+}
+
+.marker-guide p {
+  margin: 0.25rem 0 0;
+  line-height: 1.42;
+}
+
 body[data-page="studio"] .marker-strip,
 body[data-page="studio"] .zoom-panel {
   border-color: #203b55;

@@ -490,7 +490,9 @@ function renderExpirySelect() {
 
 function renderTopContext() {
   els.indexPrice.textContent = `${state.symbol} ${price(state.dashboard.spotPrice)}`;
-  els.dataSourceLabel.textContent = state.dashboard.sourceLabel;
+  els.dataSourceLabel.textContent = state.dashboard.requestLatencyMs
+    ? `${state.dashboard.sourceLabel} · ${state.dashboard.requestLatencyMs}ms`
+    : state.dashboard.sourceLabel;
   els.dataTimestamp.textContent = formatTimestamp(state.dashboard.asOf);
   els.dashboardSnapshotMeta.textContent = `${state.symbol}: GEX by Strike · ${state.dashboard.sourceLabel} · ${formatTimestamp(state.dashboard.asOf)}`;
 }

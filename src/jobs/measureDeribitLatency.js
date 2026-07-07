@@ -1,0 +1,26 @@
+import { measureDeribitLatency } from "../data/deribitLive.js";
+
+const args = parseArgs(process.argv.slice(2));
+const symbols = (args.symbols ?? args.symbol ?? "BTC,ETH")
+  .split(",")
+  .map((symbol) => symbol.trim().toUpperCase())
+  .filter(Boolean);
+const samples = Number(args.samples ?? 5);
+
+for (const symbol of symbols) {
+  const report = await measureDeribitLatency({ symbol, samples });
+  console.log(
+    `${symbol} book_summary samples=${samples} min=${report.minMs}ms p50=${report.p50Ms}ms max=${report.maxMs}ms contracts=${report.samples.at(-1)?.contracts ?? 0}`,
+  );
+}
+
+function parseArgs(argv) {
+  return Object.fromEntries(
+    argv
+      .filter((arg) => arg.startsWith("--"))
+      .map((arg) => {
+        const [key, value = "true"] = arg.slice(2).split("=");
+        return [key, value];
+      }),
+  );
+}

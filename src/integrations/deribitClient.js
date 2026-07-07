@@ -58,6 +58,12 @@ export function createDeribitJsonRpcClient({
     getTicker(instrumentName) {
       return call("public/ticker", { instrument_name: instrumentName });
     },
+    getBookSummaryByCurrency(currency, kind = "option") {
+      return call("public/get_book_summary_by_currency", {
+        currency,
+        kind,
+      });
+    },
     getTradingviewChartData(params) {
       return call("public/get_tradingview_chart_data", params);
     },

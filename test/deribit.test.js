@@ -16,6 +16,7 @@ import {
   createDuckDbRepository,
   initializeDuckDb,
 } from "../src/data/duckdbRepository.js";
+import { getLiveDeribitSnapshot, measureDeribitLatency } from "../src/data/deribitLive.js";
 
 const observedAt = "2026-07-06T08:00:00.000Z";
 
@@ -258,9 +259,11 @@ test("API auto source uses DuckDB latest Deribit snapshot when available", async
   const dbPath = join(dir, "gex.duckdb");
   const previousSource = process.env.DATA_SOURCE;
   const previousDbPath = process.env.GEX_DB_PATH;
+  const previousRealtime = process.env.DERIBIT_REALTIME;
 
   try {
     process.env.DATA_SOURCE = "auto";
+    process.env.DERIBIT_REALTIME = "0";
     process.env.GEX_DB_PATH = dbPath;
     await initializeDuckDb({ dbPath });
     const repo = await createDuckDbRepository({ dbPath });
@@ -308,6 +311,8 @@ test("API auto source uses DuckDB latest Deribit snapshot when available", async
     else process.env.DATA_SOURCE = previousSource;
     if (previousDbPath === undefined) delete process.env.GEX_DB_PATH;
     else process.env.GEX_DB_PATH = previousDbPath;
+    if (previousRealtime === undefined) delete process.env.DERIBIT_REALTIME;
+    else process.env.DERIBIT_REALTIME = previousRealtime;
     await rm(dir, { recursive: true, force: true });
   }
 });
@@ -317,9 +322,11 @@ test("API default source prefers DuckDB latest Deribit snapshot", async () => {
   const dbPath = join(dir, "gex.duckdb");
   const previousSource = process.env.DATA_SOURCE;
   const previousDbPath = process.env.GEX_DB_PATH;
+  const previousRealtime = process.env.DERIBIT_REALTIME;
 
   try {
     delete process.env.DATA_SOURCE;
+    process.env.DERIBIT_REALTIME = "0";
     process.env.GEX_DB_PATH = dbPath;
     await initializeDuckDb({ dbPath });
     const repo = await createDuckDbRepository({ dbPath });
@@ -367,8 +374,52 @@ test("API default source prefers DuckDB latest Deribit snapshot", async () => {
     else process.env.DATA_SOURCE = previousSource;
     if (previousDbPath === undefined) delete process.env.GEX_DB_PATH;
     else process.env.GEX_DB_PATH = previousDbPath;
+    if (previousRealtime === undefined) delete process.env.DERIBIT_REALTIME;
+    else process.env.DERIBIT_REALTIME = previousRealtime;
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("live Deribit snapshot uses book summary payload without DuckDB writes", async () => {
+  const client = {
+    async getBookSummaryByCurrency(symbol, kind) {
+      assert.equal(symbol, "BTC");
+      assert.equal(kind, "option");
+      return [
+        bookSummary("BTC-26JUL24-60000-C", 61000, 62, 125),
+        bookSummary("BTC-26JUL24-60000-P", 61000, 65, 175),
+      ];
+    },
+  };
+
+  const snapshot = await getLiveDeribitSnapshot({
+    symbol: "BTC",
+    client,
+    ttlMs: 0,
+    includeHistory: false,
+  });
+
+  assert.equal(snapshot.sourceName, "deribit-live");
+  assert.equal(snapshot.sourceLabel, "Deribit Live");
+  assert.equal(snapshot.spotPrice, 61000);
+  assert.equal(snapshot.byStrike.length, 1);
+  assert.equal(typeof snapshot.requestLatencyMs, "number");
+});
+
+test("Deribit latency measurement reports p50 for book summary", async () => {
+  const client = {
+    calls: 0,
+    async getBookSummaryByCurrency() {
+      this.calls += 1;
+      return [bookSummary("BTC-26JUL24-60000-C", 61000, 62, 125)];
+    },
+  };
+
+  const report = await measureDeribitLatency({ symbol: "BTC", samples: 3, client });
+
+  assert.equal(client.calls, 3);
+  assert.equal(report.samples.length, 3);
+  assert.equal(typeof report.p50Ms, "number");
 });
 
 function ticker(instrumentName, underlyingPrice, markIv, openInterest) {
@@ -384,5 +435,19 @@ function ticker(instrumentName, underlyingPrice, markIv, openInterest) {
     volume: 12,
     greeks: { gamma: 0.00004 },
     raw: { instrument_name: instrumentName },
+  };
+}
+
+function bookSummary(instrumentName, underlyingPrice, markIv, openInterest) {
+  return {
+    instrument_name: instrumentName,
+    underlying_price: underlyingPrice,
+    open_interest: openInterest,
+    mark_iv: markIv,
+    mark_price: 0.05,
+    best_bid_price: 0.04,
+    best_ask_price: 0.06,
+    last_price: 0.05,
+    volume: 10,
   };
 }

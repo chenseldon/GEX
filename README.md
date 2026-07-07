@@ -5,7 +5,7 @@ Crypto-first Gamma Exposure research platform inspired by GammaFlip-style workfl
 This repository is a runnable V2 prototype with:
 
 - A pure Node.js API for instruments, GEX summary, GEX by strike, term structure, signals, and data health.
-- A GammaFlip-style browser research app for BTC, ETH, SOL, and XRP using deterministic Deribit/Bybit/OKX-style sample option chains.
+- A GammaFlip-style browser research app for BTC and ETH with live Deribit option-chain snapshots by default.
 - A Deribit public market data collector backed by a local DuckDB file for historical option-chain research.
 - A tested model core for instrument parsing, GEX aggregation, gamma flip, walls, max pain, and signal classification.
 - V2 dashboard widgets: gauges, dual-layer GEX by strike, key levels, 24h trend charts, 3D-style heatmaps, and GEX change table coverage toggles.
@@ -35,6 +35,7 @@ npm.cmd run check
 npm.cmd start
 npm.cmd run db:init
 npm.cmd run diagnose:deribit
+npm.cmd run latency:deribit -- --symbols=BTC,ETH --samples=5
 npm.cmd run collect:deribit -- --symbols=BTC,ETH --once
 npm.cmd run inspect:duckdb
 ```
@@ -57,23 +58,32 @@ GET /api/gex/studio?symbol=BTC&expiry=2024-07-26&mode=snapshot
 GET /api/gex/trends?symbol=BTC
 GET /api/gex/heatmap?symbol=BTC&type=net
 GET /api/gex/change-table?symbol=BTC&coverage=50
+GET /api/deribit/latency?symbol=BTC&samples=3
 ```
 
-The current V2 uses deterministic fixture data, not live exchange collectors. Auth, subscriptions, paid feature gates, and third-party GammaFlip API dependencies are intentionally out of scope.
+The current V2 uses Deribit live public market data for current BTC/ETH snapshots. DuckDB is used as the historical collector and cache for History, heatmaps, and change tables. Fixture mode remains available for offline tests and UI development.
 
 ## Deribit + DuckDB Data Pipeline
 
-The Deribit integration uses public JSON-RPC market data. API keys are not required for the first version because it only reads option-chain instruments and ticker snapshots.
+The Deribit integration uses public JSON-RPC market data. API keys are not required for current option-chain snapshots because the app reads public book summaries, instruments, and ticker-derived fields.
 
 ```bash
 npm.cmd run db:init
 npm.cmd run diagnose:deribit
+npm.cmd run latency:deribit -- --symbols=BTC,ETH --samples=5
 npm.cmd run collect:deribit -- --symbols=BTC,ETH --once
 npm.cmd run collect:deribit -- --symbols=BTC,ETH --interval=60000
 npm.cmd run inspect:duckdb
 ```
 
-The local database defaults to `.data/gex.duckdb` and is ignored by Git. The collector stores raw Deribit payloads plus normalized fields for instruments, option tickers, index prices, and source-run health. Set `GEX_DB_PATH` to move the database.
+The local database defaults to `.data/gex.duckdb` and is ignored by Git. The collector stores raw Deribit payloads plus normalized fields for instruments, option tickers, index prices, and source-run health. Set `GEX_DB_PATH` to move the database. The collector defaults to `public/get_book_summary_by_currency`, so a full BTC/ETH snapshot usually takes seconds rather than hundreds of per-instrument ticker calls.
+
+Observed proxy-path latency on this workstation on 2026-07-07:
+
+```text
+BTC book_summary: p50 about 1.3s for ~874 option contracts
+ETH book_summary: p50 about 1.7s for ~712 option contracts
+```
 
 Runtime data source selection:
 
@@ -84,10 +94,11 @@ cmd /c "set DATA_SOURCE=fixture&& npm.cmd start"
 ```
 
 - `fixture`: always use deterministic sample data.
-- `auto`: default mode; use the latest DuckDB Deribit snapshot when present, otherwise fall back to fixture data.
-- `deribit`: require DuckDB Deribit data and return an API error when unavailable.
+- `auto`: default mode; use Deribit Live for current snapshots, attach DuckDB history when available, then fall back to DuckDB and fixture data if live access fails.
+- `deribit`: require Deribit Live current data and return an API error when unavailable.
+- `duckdb`: reserved for local historical snapshot workflows; set `DERIBIT_REALTIME=0` to force current endpoints to read DuckDB before fixture fallback.
 
-Deribit currently provides BTC and ETH option chains in this pipeline. If a symbol such as SOL has no Deribit option instruments, the app falls back to fixture data until another venue connector is added.
+Deribit currently provides BTC and ETH option chains in this pipeline. Symbols without Deribit option instruments, such as SOL, are hidden from the live selector until another venue connector is added.
 
 Optional future auth placeholders:
 
@@ -95,6 +106,9 @@ Optional future auth placeholders:
 DERIBIT_ENV=prod|testnet
 DERIBIT_ENDPOINT=https://www.deribit.com/api/v2
 DERIBIT_PROXY_URL=socks5h://127.0.0.1:7890
+DERIBIT_REALTIME=1
+DERIBIT_REALTIME_TTL_MS=30000
+DERIBIT_COLLECTOR_MODE=summary|ticker
 DERIBIT_CLIENT_ID=...
 DERIBIT_CLIENT_SECRET=...
 ```

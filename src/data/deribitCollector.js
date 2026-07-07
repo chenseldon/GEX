@@ -13,6 +13,7 @@ export async function collectDeribitSnapshot({
   client = createDeribitJsonRpcClient(),
   repository,
   concurrency = Number(process.env.DERIBIT_MAX_CONCURRENCY ?? 8),
+  mode = process.env.DERIBIT_COLLECTOR_MODE ?? "summary",
 } = {}) {
   const repo = repository ?? await createDuckDbRepository();
   const closeRepo = !repository;
@@ -37,19 +38,37 @@ export async function collectDeribitSnapshot({
       const tickers = [];
       const warnings = [];
 
-      await mapWithConcurrency(instruments, concurrency, async (instrument) => {
-        try {
-          const ticker = await client.getTicker(instrument.instrument_name);
-          const normalized = normalizeDeribitOptionTicker({ instrument, ticker, observedAt });
+      if (mode === "summary") {
+        const activeInstrumentNames = new Set(instruments.map((instrument) => instrument.instrument_name));
+        const summaries = await client.getBookSummaryByCurrency(symbol, "option");
+        for (const ticker of summaries) {
+          if (!activeInstrumentNames.has(ticker.instrument_name)) continue;
+          const normalized = normalizeDeribitOptionTicker({
+            instrument: instruments.find((instrument) => instrument.instrument_name === ticker.instrument_name),
+            ticker,
+            observedAt,
+          });
           if (normalized.warning) {
             warnings.push(normalized.warning);
-            return;
+          } else {
+            tickers.push(normalizeTickerForStorage({ ticker, observedAt }));
           }
-          tickers.push(normalizeTickerForStorage({ ticker, observedAt }));
-        } catch (error) {
-          warnings.push(`${instrument.instrument_name}: ${error.message}`);
         }
-      });
+      } else {
+        await mapWithConcurrency(instruments, concurrency, async (instrument) => {
+          try {
+            const ticker = await client.getTicker(instrument.instrument_name);
+            const normalized = normalizeDeribitOptionTicker({ instrument, ticker, observedAt });
+            if (normalized.warning) {
+              warnings.push(normalized.warning);
+              return;
+            }
+            tickers.push(normalizeTickerForStorage({ ticker, observedAt }));
+          } catch (error) {
+            warnings.push(`${instrument.instrument_name}: ${error.message}`);
+          }
+        });
+      }
 
       await repo.insertDeribitSnapshot({
         symbol,

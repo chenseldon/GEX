@@ -204,6 +204,25 @@
 
           <section class="marker-strip panel">
             <div id="layerChips" class="layer-chips" aria-label="Chart layers"></div>
+            <details class="marker-guide">
+              <summary>Level Guide: N / V / F / A / P</summary>
+              <div class="marker-guide-grid">
+                <article class="negative">
+                  <strong>红色：负伽马体系（波动放大区）</strong>
+                  <p><b>N1 / N2</b>：一级、二级负伽马墙，Vol. Trigger 波动触发位。价格有效跌破后，负伽马放大效应生效，行情进入加速趋势；N1 是离当前价格最近的核心关口。</p>
+                  <p><b>V</b>：Max Volatility 波动率峰值位，全市场负伽马绝对值最大的价位，波动放大效应最强，容易出现极端暴涨暴跌。</p>
+                </article>
+                <article class="neutral">
+                  <strong>紫色：中性分界与绝对持仓区</strong>
+                  <p><b>F</b>：Gamma Flip Point，Regime Change 状态切换位，做市商总伽马敞口约为 0；上方偏正伽马震荡市，下方偏负伽马趋势市。</p>
+                  <p><b>A1 / A2</b>：一级、二级绝对伽马墙，Magnet 磁吸位，期权持仓总规模最高的价位带，容易形成到期前钉住效应。</p>
+                </article>
+                <article class="positive">
+                  <strong>绿色：正伽马体系（波动平抑区）</strong>
+                  <p><b>P1 / P2</b>：一级、二级正伽马墙，Gamma Resist. 伽马阻力位并带磁吸属性。价格上行至此，做市商对冲卖盘形成天然抛压，有效突破后可能转化为支撑。</p>
+                </article>
+              </div>
+            </details>
             <div id="markerChips" class="marker-chips"></div>
           </section>
 

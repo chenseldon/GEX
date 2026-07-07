@@ -33,7 +33,7 @@ export function normalizeDeribitOptionTicker({ instrument, ticker, observedAt })
       optionType,
       impliedVolatility: normalizeIv(markIv),
       openInterest,
-      volume: Number(ticker?.stats?.volume ?? 0),
+      volume: Number(ticker?.stats?.volume ?? ticker?.volume ?? 0),
       markPrice: Number(ticker?.mark_price ?? 0),
       bidPrice: nullableNumber(ticker?.best_bid_price ?? ticker?.bid_price),
       askPrice: nullableNumber(ticker?.best_ask_price ?? ticker?.ask_price),
@@ -58,7 +58,7 @@ export function normalizeTickerForStorage({ ticker, observedAt }) {
     bidPrice: nullableNumber(ticker.best_bid_price ?? ticker.bid_price),
     askPrice: nullableNumber(ticker.best_ask_price ?? ticker.ask_price),
     lastPrice: nullableNumber(ticker.last_price),
-    volume: Number(ticker.stats?.volume ?? 0),
+    volume: Number(ticker.stats?.volume ?? ticker.volume ?? 0),
     greeks,
     raw: ticker,
   };

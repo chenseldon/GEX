@@ -8,6 +8,7 @@ import {
 } from "../domain/gex.js";
 import { instruments, optionChains, SAMPLE_AS_OF } from "../domain/sampleData.js";
 import { createDuckDbRepository, getDuckDbPath } from "../data/duckdbRepository.js";
+import { getLiveDeribitSnapshot, measureDeribitLatency } from "../data/deribitLive.js";
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
@@ -40,8 +41,15 @@ export function createApiHandler() {
 
   async function getSnapshot(symbol) {
     const source = process.env.DATA_SOURCE ?? "auto";
+    if (source === "duckdb") {
+      const duckdb = await getDuckDbDeribitSnapshot(symbol);
+      if (duckdb) {
+        return duckdb;
+      }
+      throw new Error(`DuckDB data unavailable for symbol: ${symbol}`);
+    }
     if (source === "deribit" || source === "auto") {
-      const deribit = await getDeribitSnapshot(symbol);
+      const deribit = await getCurrentDeribitSnapshot(symbol);
       if (deribit) {
         return deribit;
       }
@@ -58,6 +66,12 @@ export function createApiHandler() {
     try {
       if (url.pathname === "/api/instruments") {
         return json({ instruments: await getInstrumentList() });
+      }
+
+      if (url.pathname === "/api/deribit/latency") {
+        const symbol = (url.searchParams.get("symbol") ?? "BTC").toUpperCase();
+        const samples = Number(url.searchParams.get("samples") ?? 3);
+        return json(await measureDeribitLatency({ symbol, samples }));
       }
 
       if (url.pathname === "/api/gex/summary") {
@@ -89,6 +103,7 @@ export function createApiHandler() {
           spotPrice: snapshot.spotPrice,
           asOf: snapshot.asOf,
           sourceLabel: snapshot.sourceLabel,
+          requestLatencyMs: snapshot.requestLatencyMs,
           gauges: [
             gauge("Gamma Regime", ui.gauges.regime, ui.gauges.regime >= 0 ? "Positive" : "Negative"),
             gauge("GEX Call/Put", ui.gauges.callPut, Math.abs(ui.gauges.callPut) < 0.15 ? "Neutral" : ui.gauges.callPut > 0 ? "Call led" : "Put led"),
@@ -138,6 +153,7 @@ export function createApiHandler() {
           spotPrice: snapshot.spotPrice,
           asOf: snapshot.asOf,
           sourceLabel: snapshot.sourceLabel,
+          requestLatencyMs: snapshot.requestLatencyMs,
           mode: url.searchParams.get("mode") ?? "snapshot",
           rows,
           expiries: snapshot.byExpiry,
@@ -224,7 +240,7 @@ export function createApiHandler() {
 
       return json({ error: "Not found" }, 404);
     } catch (error) {
-      const status = /Unsupported symbol|symbol is required|type must be|coverage must be|Deribit data unavailable/.test(error.message)
+      const status = /Unsupported symbol|symbol is required|type must be|coverage must be|Deribit data unavailable|DuckDB data unavailable/.test(error.message)
         ? 400
         : 500;
       return json({ error: error.message }, status);
@@ -327,21 +343,37 @@ async function getDeribitAvailableInstruments() {
     repo = await createDuckDbRepository({ dbPath: getDuckDbPath() });
     const available = await repo.getAvailableSymbols();
     const liveSymbols = new Set(available.filter((row) => row.tickerCount > 0).map((row) => row.symbol));
+    const symbols = liveSymbols.size > 0 ? liveSymbols : new Set(["BTC", "ETH"]);
     return instruments
-      .filter((instrument) => liveSymbols.has(instrument.symbol))
+      .filter((instrument) => symbols.has(instrument.symbol))
       .map((instrument) => ({
         ...instrument,
-        venue: "Deribit",
+        venue: "Deribit Live",
         lastSnapshotAt: available.find((row) => row.symbol === instrument.symbol)?.lastSnapshotAt,
       }));
   } catch {
-    return [];
+    return instruments
+      .filter((instrument) => ["BTC", "ETH"].includes(instrument.symbol))
+      .map((instrument) => ({ ...instrument, venue: "Deribit Live" }));
   } finally {
     repo?.close();
   }
 }
 
-async function getDeribitSnapshot(symbol) {
+async function getCurrentDeribitSnapshot(symbol) {
+  if (process.env.DERIBIT_REALTIME !== "0") {
+    try {
+      return await getLiveDeribitSnapshot({ symbol });
+    } catch {
+      if ((process.env.DATA_SOURCE ?? "auto") === "deribit") {
+        throw new Error(`Deribit live data unavailable for symbol: ${symbol}`);
+      }
+    }
+  }
+  return getDuckDbDeribitSnapshot(symbol);
+}
+
+async function getDuckDbDeribitSnapshot(symbol) {
   let repo;
   try {
     repo = await createDuckDbRepository({ dbPath: getDuckDbPath() });
@@ -376,7 +408,7 @@ function safeSnapshot(input) {
 }
 
 function buildRealTrendSeries(snapshot, { hours = 24 } = {}) {
-  if (snapshot.sourceName !== "deribit-duckdb") {
+  if (!isDeribitMarketSnapshot(snapshot)) {
     return buildTrendSeries(snapshot);
   }
 
@@ -412,7 +444,7 @@ function buildRealHeatmapMatrix(snapshot, { type = "net", window = "24h" } = {})
   if (!["net", "abs"].includes(type)) {
     throw new Error("type must be net or abs");
   }
-  if (snapshot.sourceName !== "deribit-duckdb") {
+  if (!isDeribitMarketSnapshot(snapshot)) {
     return buildHeatmapMatrix(snapshot, { type });
   }
 
@@ -460,7 +492,7 @@ function buildRealHeatmapMatrix(snapshot, { type = "net", window = "24h" } = {})
 }
 
 function buildRealChangeTable(snapshot, { coverage = 50 } = {}) {
-  if (snapshot.sourceName !== "deribit-duckdb") {
+  if (!isDeribitMarketSnapshot(snapshot)) {
     return buildChangeTable(snapshot, { coverage });
   }
   const allowed = [50, 80, 90, 100];
@@ -518,10 +550,14 @@ function historyForWindow(snapshot, hours) {
   const filtered = history
     .filter((item) => new Date(item.asOf).getTime() >= cutoff)
     .sort((a, b) => new Date(a.asOf) - new Date(b.asOf));
-  if (filtered.length === 0 && snapshot.sourceName === "deribit-duckdb") {
+  if (filtered.length === 0 && isDeribitMarketSnapshot(snapshot)) {
     return [snapshot];
   }
   return filtered;
+}
+
+function isDeribitMarketSnapshot(snapshot) {
+  return snapshot.sourceName === "deribit-duckdb" || snapshot.sourceName === "deribit-live";
 }
 
 function windowHours(window) {
