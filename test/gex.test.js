@@ -129,8 +129,8 @@ test("buildUiMetrics returns bounded gauges and all V2 key levels", () => {
     ["flip", "max_stability", "max_volatility", "positive_peak", "negative_peak", "absolute_max"],
   );
   assert.deepEqual(
-    metrics.studioKeyLevels.map((level) => level.id),
-    [
+    new Set(metrics.studioKeyLevels.map((level) => level.id)),
+    new Set([
       "negative_2",
       "max_volatility",
       "negative_1",
@@ -140,8 +140,10 @@ test("buildUiMetrics returns bounded gauges and all V2 key levels", () => {
       "absolute_1",
       "positive_2",
       "max_stability",
-    ],
+    ]),
   );
+  assert.equal(metrics.studioKeyLevels.every((level, index, levels) => index === 0 || levels[index - 1].strike <= level.strike), true);
+  assert.deepEqual(metrics.markerBands.map((band) => band.id), ["negative_dense", "absolute_dense", "positive_dense"]);
   assert.equal(typeof metrics.absoluteGex, "number");
   assert.equal(typeof metrics.peaks.positive.strike, "number");
   assert.equal(typeof metrics.peaks.negative.strike, "number");

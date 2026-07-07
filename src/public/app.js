@@ -541,7 +541,7 @@ function renderStudio() {
   renderStudioModeSummary();
   renderStudioCategoryDetails();
   const selected = selectedMarker();
-  const markerText = selected && !["expiry", "history", "forecast"].includes(state.category) ? ` | ${shortLevel(selected.id)} ${price(selected.strike)}` : "";
+  const markerText = selected && !["expiry", "history", "forecast"].includes(state.category) ? ` | ${levelShort(selected)} ${price(selected.strike)}` : "";
   const chartName = studioChartName();
   const splitText = state.category === "expiry" && state.expiryMetric === "gexUd" ? ` | Split at $${price(state.studio.spotPrice)}` : "";
   if (state.category === "history") {
@@ -637,6 +637,7 @@ function renderStudioMainChart() {
   renderDualStrikeChart(els.studioStrikeChart, {
     rows: state.studio.rows,
     keyLevels: state.studio.markers.keyLevels,
+    markerBands: state.studio.markers.bands,
     spotPrice: state.studio.spotPrice,
     zoomPct: state.zoom,
     panOffset: state.panOffset,
@@ -721,6 +722,7 @@ function renderFocusedCharts() {
   renderDualStrikeChart(els.strikesChart, {
     rows: state.studio.rows,
     keyLevels: state.studio.markers.keyLevels,
+    markerBands: state.studio.markers.bands,
     spotPrice: state.studio.spotPrice,
     zoomPct: 100,
   });
@@ -922,16 +924,18 @@ function renderLayerChips() {
 }
 
 function renderMarkerChips(levels) {
+  const sortedLevels = levels.slice().sort((a, b) => a.strike - b.strike || levelShort(a).localeCompare(levelShort(b)));
   els.markerChips.replaceChildren(
-    ...levels.map((level) => {
+    ...sortedLevels.map((level) => {
       const node = document.createElement("button");
       node.type = "button";
-      node.className = `marker-chip${state.selectedMarkerId === level.id ? " active" : ""}`;
+      node.className = `marker-chip ${level.system ?? "neutral"}${state.selectedMarkerId === level.id ? " active" : ""}`;
       node.setAttribute("data-marker-id", level.id);
+      node.setAttribute("data-system", level.system ?? "neutral");
       node.style.borderColor = level.color;
-      node.title = `${shortLevel(level.id)} ${price(level.strike)} ${money(level.value)} ${level.label}`;
+      node.title = `${levelShort(level)} ${price(level.strike)} ${money(level.value)} ${level.role ?? level.label}. ${level.description ?? ""}`;
       node.innerHTML = `
-        <span style="background:${level.color}">${shortLevel(level.id)}</span>
+        <span style="background:${level.color}">${levelShort(level)}</span>
         <strong>${price(level.strike)}</strong>
         <em>${money(level.value)}</em>
         <small>${level.label}</small>
@@ -2121,6 +2125,7 @@ function renderDualStrikeChart(
   {
     rows,
     keyLevels,
+    markerBands = [],
     spotPrice,
     zoomPct = 100,
     panOffset = 0,
@@ -2140,8 +2145,9 @@ function renderDualStrikeChart(
   const bottomTop = split + 16;
   const maxNet = Math.max(...visible.map((row) => Math.abs(row.gex)), 1);
   const maxAbs = Math.max(...visible.map((row) => Math.abs(row.gex)), 1);
-  const minStrike = Math.min(...visible.map((row) => row.strike), spotPrice, ...keyLevels.map((level) => level.strike));
-  const maxStrike = Math.max(...visible.map((row) => row.strike), spotPrice, ...keyLevels.map((level) => level.strike));
+  const bandStrikes = markerBands.flatMap((band) => [band.from, band.to]).filter(Number.isFinite);
+  const minStrike = Math.min(...visible.map((row) => row.strike), spotPrice, ...keyLevels.map((level) => level.strike), ...bandStrikes);
+  const maxStrike = Math.max(...visible.map((row) => row.strike), spotPrice, ...keyLevels.map((level) => level.strike), ...bandStrikes);
   const barWidth = Math.max(7, (width - pad.left - pad.right) / visible.length - 8);
   const zeroY = yTop(0);
   const selected = keyLevels.find((level) => level.id === selectedMarkerId);
@@ -2155,6 +2161,13 @@ function renderDualStrikeChart(
   line(svg, pad.left, zeroY, width - pad.right, zeroY, "#d6e6f8", "3 5", "zero-line");
 
   if (layers.regime) {
+    markerBands.forEach((band) => {
+      const left = x(band.from);
+      const right = x(band.to);
+      const bandWidth = Math.max(0, right - left);
+      rect(svg, left, pad.top, bandWidth, topBottom - pad.top, colorToArea(band.color, 0.18), 4, `marker-zone ${band.id}`);
+      rect(svg, left, bottomTop, bandWidth, height - pad.bottom - bottomTop, colorToArea(band.color, 0.12), 4, `marker-zone ${band.id}`);
+    });
     visibleLevels.forEach((level) => {
       const widthPx = Math.max(barWidth * 1.2, 18);
       rect(svg, x(level.strike) - widthPx / 2, pad.top, widthPx, height - pad.bottom - pad.top, colorToArea(level.color), 4, "regime-band");
@@ -2193,7 +2206,7 @@ function renderDualStrikeChart(
   visibleLevels.forEach((level) => {
     const pos = x(level.strike);
     line(svg, pos, pad.top, pos, height - pad.bottom, level.color, level.id === selectedMarkerId ? "" : "3 4", level.id === selectedMarkerId ? "marker-line selected-marker-line" : "marker-line");
-    markerLabel(svg, pos, level.value < 0 ? zeroY + 22 : pad.top + 16, shortLevel(level.id), level.color);
+    markerLabel(svg, pos, level.value < 0 ? zeroY + 22 : pad.top + 16, levelShort(level), level.color);
   });
   line(svg, x(spotPrice), pad.top, x(spotPrice), height - pad.bottom, "#e5eef8", "4 4", "spot-line");
   markerLabel(svg, x(spotPrice), topBottom + 16, price(spotPrice), "#e5eef8", true);
@@ -2504,12 +2517,22 @@ function rgb(values) {
   return `rgb(${values.join(" ")})`;
 }
 
-function colorToArea(color) {
-  if (color === "#31c46b") return "rgba(49, 196, 107, 0.16)";
-  if (color === "#e5384f") return "rgba(229, 56, 79, 0.16)";
-  if (color === "#8d4dff") return "rgba(141, 77, 255, 0.18)";
-  if (color === "#d08a21") return "rgba(208, 138, 33, 0.18)";
-  return "rgba(93, 156, 236, 0.18)";
+function colorToArea(color, alpha = 0.18) {
+  const rgbMap = {
+    "#31c46b": "49, 196, 107",
+    "#2fcf6f": "47, 207, 111",
+    "#20b963": "32, 185, 99",
+    "#1fcb6a": "31, 203, 106",
+    "#e5384f": "229, 56, 79",
+    "#ff3d57": "255, 61, 87",
+    "#ff5b6f": "255, 91, 111",
+    "#7d20ff": "125, 32, 255",
+    "#9b5cff": "155, 92, 255",
+    "#8d4dff": "141, 77, 255",
+    "#d08a21": "208, 138, 33",
+    "#ff00ff": "255, 0, 255",
+  };
+  return `rgba(${rgbMap[color] ?? "93, 156, 236"}, ${alpha})`;
 }
 
 function money(value) {
@@ -2565,4 +2588,8 @@ function shortLevel(id) {
     positive_1: "P1",
     positive_2: "P2",
   }[id] ?? id.slice(0, 2).toUpperCase();
+}
+
+function levelShort(level) {
+  return level?.shortLabel ?? shortLevel(level?.id ?? "");
 }

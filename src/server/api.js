@@ -164,6 +164,7 @@ export function createApiHandler() {
             maxPainStrike: snapshot.maxPainStrike,
             peaks: ui.peaks,
             keyLevels: ui.studioKeyLevels,
+            bands: ui.markerBands,
           },
           summary: summaryPayload(snapshot, ui),
           summaryRail: buildSummaryRail({ ...snapshot, byStrike: rows }, trends),

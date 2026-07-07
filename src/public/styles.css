@@ -1017,7 +1017,7 @@ body[data-page="studio"] .rail-card svg {
 
 .marker-guide-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.55rem;
   margin-top: 0.55rem;
 }
@@ -1039,6 +1039,10 @@ body[data-page="studio"] .rail-card svg {
 
 .marker-guide article.positive {
   border: 1px solid rgba(47, 207, 111, 0.35);
+}
+
+.marker-guide article.bands {
+  border: 1px solid rgba(93, 156, 236, 0.35);
 }
 
 .marker-guide strong {
@@ -1198,6 +1202,18 @@ body[data-page="studio"] .zoom-panel {
   padding: 0.42rem 0.55rem;
 }
 
+.marker-chip.negative {
+  background: linear-gradient(180deg, rgba(255, 61, 87, 0.12), #14283d 55%);
+}
+
+.marker-chip.neutral {
+  background: linear-gradient(180deg, rgba(125, 32, 255, 0.12), #14283d 55%);
+}
+
+.marker-chip.positive {
+  background: linear-gradient(180deg, rgba(47, 207, 111, 0.12), #14283d 55%);
+}
+
 .marker-chip.active {
   background: rgb(102 83 255 / 10%);
   box-shadow: 0 0 0 2px rgb(102 83 255 / 18%);
@@ -1234,6 +1250,10 @@ body[data-page="studio"] .zoom-panel {
 
 .regime-band {
   opacity: 0.34;
+}
+
+.marker-zone {
+  opacity: 0.78;
 }
 
 .selected-marker-band {

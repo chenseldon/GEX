@@ -445,12 +445,90 @@ function buildUiMetricsFromRows({
   const positiveRanked = positiveRows.slice().sort((a, b) => b.gex - a.gex || a.strike - b.strike);
   const negativeRanked = negativeRows.slice().sort((a, b) => Math.abs(b.gex) - Math.abs(a.gex) || a.strike - b.strike);
   const absoluteRanked = rows.slice().sort((a, b) => Math.abs(b.gex) - Math.abs(a.gex) || a.strike - b.strike);
-  const maxVolatility = rows
+  const negativeBelowSpot = negativeRows
     .slice()
-    .sort((a, b) => Math.abs(a.strike - gammaFlip) - Math.abs(b.strike - gammaFlip))[0];
-  const maxStability = rows
+    .filter((row) => row.strike < spotPrice)
+    .sort((a, b) => b.strike - a.strike || Math.abs(b.gex) - Math.abs(a.gex));
+  const negativeByDistance = negativeRows
     .slice()
-    .sort((a, b) => Math.abs(a.strike - maxPainStrike) - Math.abs(b.strike - maxPainStrike))[0];
+    .sort((a, b) => Math.abs(a.strike - spotPrice) - Math.abs(b.strike - spotPrice) || Math.abs(b.gex) - Math.abs(a.gex));
+  const negative1 = negativeBelowSpot[0] ?? negativeByDistance[0] ?? negativePeak;
+  const negative2 = negativeBelowSpot.find((row) => row.strike !== negative1?.strike)
+    ?? negativeByDistance.find((row) => row.strike !== negative1?.strike)
+    ?? negativeRanked[1]
+    ?? negative1;
+  const volatilityPoint = negativeRanked[0] ?? negativePeak ?? absolutePeak;
+  const stabilityWindow = Math.max(Math.abs(spotPrice) * 0.18, 1);
+  const stabilityCandidates = rows.filter((row) => row.openInterest > 0 && Math.abs(row.strike - spotPrice) <= stabilityWindow);
+  const stabilityPoint = (stabilityCandidates.length ? stabilityCandidates : rows)
+    .slice()
+    .sort((a, b) => Math.abs(a.gex) - Math.abs(b.gex) || Math.abs(a.strike - spotPrice) - Math.abs(b.strike - spotPrice))[0];
+  const positive1 = positiveRanked[0] ?? positivePeak;
+  const positive2 = positiveRanked.find((row) => row.strike !== positive1?.strike) ?? positiveRanked[1] ?? positive1;
+  const absolute1 = absoluteRanked[0] ?? absolutePeak;
+  const absolute2 = absoluteRanked.find((row) => row.strike !== absolute1?.strike) ?? absoluteRanked[1] ?? absolute1;
+  const vOverlapsN1 = volatilityPoint?.strike === negative1?.strike;
+  const studioKeyLevels = sortMarkerLevels([
+    level("negative_2", "Vol. Trigger", negative2?.strike ?? putWall, negative2?.gex ?? negativePeak?.gex ?? 0, "#ff5b6f", {
+      shortLabel: "N2",
+      system: "negative",
+      role: "Secondary Negative Gamma Wall",
+      description: "Second negative gamma wall. Below this band, dealer hedging can keep amplifying realized volatility.",
+    }),
+    level("max_volatility", "Max Volatility", volatilityPoint?.strike ?? gammaFlip, volatilityPoint?.gex ?? 0, "#e5384f", {
+      shortLabel: vOverlapsN1 ? "N1v" : "V",
+      system: "negative",
+      role: "Volatility Point",
+      description: "Largest negative gamma magnitude. This is the strongest volatility amplification warning level.",
+    }),
+    level("negative_1", "Vol. Trigger", negative1?.strike ?? putWall, negative1?.gex ?? 0, "#ff3d57", {
+      shortLabel: "N1",
+      system: "negative",
+      role: "Primary Negative Gamma Wall",
+      description: "Nearest core negative gamma trigger below spot. Treat it as trend acceleration risk, not automatic support.",
+    }),
+    level("flip", "Regime Change", gammaFlip, 0, "#ff00ff", {
+      shortLabel: "F",
+      system: "neutral",
+      role: "Gamma Flip Point",
+      description: "Estimated zero net gamma boundary. Above it the market is more positive-gamma; below it negative-gamma effects dominate.",
+    }),
+    level("absolute_2", "Magnet", absolute2?.strike ?? maxPainStrike, Math.abs(absolute2?.gex ?? absolutePeak?.gex ?? 0), "#9b5cff", {
+      shortLabel: "A2",
+      system: "neutral",
+      role: "Secondary Absolute Gamma Wall",
+      description: "Second largest absolute gamma concentration. It extends the pinning and magnet zone.",
+    }),
+    level("positive_1", "Gamma Resist.", positive1?.strike ?? callWall, positive1?.gex ?? 0, "#2fcf6f", {
+      shortLabel: "P1",
+      system: "positive",
+      role: "Primary Positive Gamma Wall",
+      description: "Largest positive gamma wall. Dealer hedging can dampen upside volatility and create resistance.",
+    }),
+    level("absolute_1", "Magnet", absolute1?.strike ?? maxPainStrike, Math.abs(absolute1?.gex ?? 0), "#7d20ff", {
+      shortLabel: "A1",
+      system: "neutral",
+      role: "Primary Absolute Gamma Wall",
+      description: "Largest absolute gamma concentration. Price can pin or mean-revert around this magnet level.",
+    }),
+    level("positive_2", "Gamma Resist.", positive2?.strike ?? callWall, positive2?.gex ?? positivePeak?.gex ?? 0, "#20b963", {
+      shortLabel: "P2",
+      system: "positive",
+      role: "Secondary Positive Gamma Wall",
+      description: "Second positive gamma wall. It marks the broader volatility-dampening resistance zone.",
+    }),
+    level("max_stability", "Max Stability", stabilityPoint?.strike ?? maxPainStrike, stabilityPoint?.gex ?? 0, "#1fcb6a", {
+      shortLabel: "S",
+      system: "positive",
+      role: "Stability Point",
+      description: "Strike where net gamma is closest to balanced. It is a reference for mean-reversion and range behavior.",
+    }),
+  ]);
+  const markerBands = [
+    markerBand("negative_dense", "N1-N2 Volatility Acceleration Band", negative1, negative2, "#ff3d57", "Negative gamma concentration band. Inside it, dealer hedging can amplify trend moves and realized volatility."),
+    markerBand("absolute_dense", "A1-A2 Magnet Band", absolute1, absolute2, "#7d20ff", "Absolute gamma concentration band. It is the main pinning and magnet area around heavy option positioning."),
+    markerBand("positive_dense", "P1-P2 Stability Band", positive1, positive2, "#2fcf6f", "Positive gamma concentration band. Inside it, dealer hedging can dampen volatility and favor mean reversion."),
+  ].filter(Boolean);
 
   return {
     symbol,
@@ -472,23 +550,14 @@ function buildUiMetricsFromRows({
     },
     keyLevels: [
       level("flip", "Flip Point", gammaFlip, netGex, "#ff00ff"),
-      level("max_stability", "Max Stability", maxStability?.strike ?? maxPainStrike, maxStability?.gex ?? 0, "#1fcb6a"),
-      level("max_volatility", "Max Volatility", maxVolatility?.strike ?? gammaFlip, maxVolatility?.gex ?? 0, "#e5384f"),
+      level("max_stability", "Max Stability", stabilityPoint?.strike ?? maxPainStrike, stabilityPoint?.gex ?? 0, "#1fcb6a"),
+      level("max_volatility", "Max Volatility", volatilityPoint?.strike ?? gammaFlip, volatilityPoint?.gex ?? 0, "#e5384f"),
       level("positive_peak", "Positive Peak", positivePeak?.strike ?? callWall, positivePeak?.gex ?? 0, "#31c46b"),
       level("negative_peak", "Negative Peak", negativePeak?.strike ?? putWall, negativePeak?.gex ?? 0, "#e5384f"),
       level("absolute_max", "Absolute Max", absolutePeak?.strike ?? maxPainStrike, absolutePeak?.gex ?? 0, "#7d20ff"),
     ],
-    studioKeyLevels: [
-      level("negative_2", "Vol. Trigger", negativeRanked[1]?.strike ?? putWall, negativeRanked[1]?.gex ?? negativePeak?.gex ?? 0, "#ff5b6f"),
-      level("max_volatility", "Max Volatility", maxVolatility?.strike ?? gammaFlip, maxVolatility?.gex ?? 0, "#e5384f"),
-      level("negative_1", "Vol. Trigger", negativeRanked[0]?.strike ?? putWall, negativeRanked[0]?.gex ?? 0, "#ff3d57"),
-      level("flip", "Regime Change", gammaFlip, 0, "#ff00ff"),
-      level("absolute_2", "Magnet", absoluteRanked[1]?.strike ?? maxPainStrike, Math.abs(absoluteRanked[1]?.gex ?? absolutePeak?.gex ?? 0), "#9b5cff"),
-      level("positive_1", "Gamma Resist.", positiveRanked[0]?.strike ?? callWall, positiveRanked[0]?.gex ?? 0, "#2fcf6f"),
-      level("absolute_1", "Magnet", absoluteRanked[0]?.strike ?? maxPainStrike, Math.abs(absoluteRanked[0]?.gex ?? 0), "#7d20ff"),
-      level("positive_2", "Gamma Resist.", positiveRanked[1]?.strike ?? callWall, positiveRanked[1]?.gex ?? positivePeak?.gex ?? 0, "#20b963"),
-      level("max_stability", "Max Stability", maxStability?.strike ?? maxPainStrike, maxStability?.gex ?? 0, "#1fcb6a"),
-    ],
+    studioKeyLevels,
+    markerBands,
   };
 }
 
@@ -542,13 +611,37 @@ function peakShape(row) {
   };
 }
 
-function level(id, labelText, strike, value, color) {
+function level(id, labelText, strike, value, color, metadata = {}) {
   return {
     id,
     label: labelText,
     strike: round(strike, 2),
     value: round(value, 2),
     color,
+    ...metadata,
+  };
+}
+
+function sortMarkerLevels(levels) {
+  const systemRank = { negative: 0, neutral: 1, positive: 2 };
+  return levels
+    .filter((entry) => Number.isFinite(entry.strike))
+    .sort((a, b) => a.strike - b.strike || (systemRank[a.system] ?? 9) - (systemRank[b.system] ?? 9) || a.id.localeCompare(b.id));
+}
+
+function markerBand(id, labelText, fromRow, toRow, color, description) {
+  if (!fromRow || !toRow) return null;
+  const from = Math.min(fromRow.strike, toRow.strike);
+  const to = Math.max(fromRow.strike, toRow.strike);
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+  const halfWidth = from === to ? Math.max(Math.abs(from) * 0.005, 1) : 0;
+  return {
+    id,
+    label: labelText,
+    from: round(from - halfWidth, 2),
+    to: round(to + halfWidth, 2),
+    color,
+    description,
   };
 }
 
