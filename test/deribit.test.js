@@ -406,6 +406,32 @@ test("live Deribit snapshot uses book summary payload without DuckDB writes", as
   assert.equal(typeof snapshot.requestLatencyMs, "number");
 });
 
+test("live Deribit snapshot prefers current index price for spot", async () => {
+  const client = {
+    async getBookSummaryByCurrency(symbol, kind) {
+      assert.equal(symbol, "BTC");
+      assert.equal(kind, "option");
+      return [
+        bookSummary("BTC-26JUL24-60000-C", 61000, 62, 125),
+        bookSummary("BTC-26JUL24-60000-P", 61000, 65, 175),
+      ];
+    },
+    async getIndexPrice(indexName) {
+      assert.equal(indexName, "btc_usd");
+      return { index_price: 61234.5 };
+    },
+  };
+
+  const snapshot = await getLiveDeribitSnapshot({
+    symbol: "BTC",
+    client,
+    ttlMs: -1,
+    includeHistory: false,
+  });
+
+  assert.equal(snapshot.spotPrice, 61234.5);
+});
+
 test("Deribit latency measurement reports p50 for book summary", async () => {
   const client = {
     calls: 0,

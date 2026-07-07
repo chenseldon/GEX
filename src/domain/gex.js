@@ -221,6 +221,7 @@ export function buildChangeTable(snapshot, { coverage = 50 } = {}) {
 
 export function buildSummaryRail(snapshot, trendSeries = buildTrendSeries(snapshot)) {
   const ui = buildUiMetrics(snapshot);
+  snapshot = { ...snapshot, gammaFlip: ui.gammaFlip, netGex: ui.netGex };
   const trends = trendSeries.points;
 
   return [
@@ -228,8 +229,8 @@ export function buildSummaryRail(snapshot, trendSeries = buildTrendSeries(snapsh
       id: "flip_point",
       title: "Flip Point",
       label: "Regime boundary · 24h",
-      value: snapshot.gammaFlip,
-      formattedValue: priceLabel(snapshot.gammaFlip),
+      value: ui.gammaFlip,
+      formattedValue: priceLabel(ui.gammaFlip),
       accent: "#ff00ff",
       status: snapshot.spotPrice >= snapshot.gammaFlip ? "Above flip · positive" : "Below flip · negative",
       series: trends.map((point) => ({ time: point.time, value: point.flipPoint })),
@@ -238,9 +239,9 @@ export function buildSummaryRail(snapshot, trendSeries = buildTrendSeries(snapsh
       id: "hedging_pressure",
       title: "Hedging Pressure",
       label: "Net GEX · 24h",
-      value: snapshot.netGex,
-      formattedValue: compactLabel(snapshot.netGex),
-      accent: snapshot.netGex >= 0 ? "#31c46b" : "#e5384f",
+      value: ui.netGex,
+      formattedValue: compactLabel(ui.netGex),
+      accent: ui.netGex >= 0 ? "#31c46b" : "#e5384f",
       status: ui.gauges.regime >= 0 ? "Dealers dampen moves" : "Dealers amplify moves",
       series: trends.map((point) => ({ time: point.time, value: point.hedgingPressure })),
     },
@@ -426,6 +427,11 @@ function buildUiMetricsFromRows({
   asOf = "",
 }) {
   const rows = collapseStrikeRows(byStrike);
+  const effectiveNetGex = rows.reduce((sum, row) => sum + row.gex, 0);
+  const effectiveGammaFlip = rows.length ? calculateGammaFlip(rows, spotPrice, effectiveNetGex) : gammaFlip;
+  const effectiveCallWall = maxBy(rows, (row) => Math.abs(row.callGex))?.strike ?? callWall;
+  const effectivePutWall = maxBy(rows, (row) => Math.abs(row.putGex))?.strike ?? putWall;
+  const effectiveMaxPainStrike = maxPainStrike;
   const positiveRows = rows.filter((row) => row.gex >= 0);
   const negativeRows = rows.filter((row) => row.gex < 0);
   const positiveGex = positiveRows.reduce((sum, row) => sum + row.gex, 0);
@@ -463,55 +469,55 @@ function buildUiMetricsFromRows({
   const absolute2 = absoluteRanked.find((row) => row.strike !== absolute1?.strike) ?? absoluteRanked[1] ?? absolute1;
   const vOverlapsN1 = volatilityPoint?.strike === negative1?.strike;
   const studioKeyLevels = sortMarkerLevels([
-    level("negative_2", "Vol. Trigger", negative2?.strike ?? putWall, negative2?.gex ?? negativePeak?.gex ?? 0, "#ff5b6f", {
+    level("negative_2", "Vol. Trigger", negative2?.strike ?? effectivePutWall, negative2?.gex ?? negativePeak?.gex ?? 0, "#ff5b6f", {
       shortLabel: "N2",
       system: "negative",
       role: "Secondary Negative Gamma Wall",
       description: "Second negative gamma wall. Below this band, dealer hedging can keep amplifying realized volatility.",
     }),
-    level("max_volatility", "Max Volatility", volatilityPoint?.strike ?? gammaFlip, volatilityPoint?.gex ?? 0, "#e5384f", {
+    level("max_volatility", "Max Volatility", volatilityPoint?.strike ?? effectiveGammaFlip, volatilityPoint?.gex ?? 0, "#e5384f", {
       shortLabel: vOverlapsN1 ? "N1v" : "V",
       system: "negative",
       role: "Volatility Point",
       description: "Largest negative gamma magnitude. This is the strongest volatility amplification warning level.",
     }),
-    level("negative_1", "Vol. Trigger", negative1?.strike ?? putWall, negative1?.gex ?? 0, "#ff3d57", {
+    level("negative_1", "Vol. Trigger", negative1?.strike ?? effectivePutWall, negative1?.gex ?? 0, "#ff3d57", {
       shortLabel: "N1",
       system: "negative",
       role: "Primary Negative Gamma Wall",
       description: "Largest negative gamma wall by absolute exposure. Treat it as trend acceleration risk, not automatic support.",
     }),
-    level("flip", "Regime Change", gammaFlip, 0, "#ff00ff", {
+    level("flip", "Regime Change", effectiveGammaFlip, 0, "#ff00ff", {
       shortLabel: "F",
       system: "neutral",
       role: "Gamma Flip Point",
       description: "Estimated zero net gamma boundary. Above it the market is more positive-gamma; below it negative-gamma effects dominate.",
     }),
-    level("absolute_2", "Magnet", absolute2?.strike ?? maxPainStrike, Math.abs(absolute2?.gex ?? absolutePeak?.gex ?? 0), "#9b5cff", {
+    level("absolute_2", "Magnet", absolute2?.strike ?? effectiveMaxPainStrike, Math.abs(absolute2?.gex ?? absolutePeak?.gex ?? 0), "#9b5cff", {
       shortLabel: "A2",
       system: "neutral",
       role: "Secondary Absolute Gamma Wall",
       description: "Second largest absolute gamma concentration. It extends the pinning and magnet zone.",
     }),
-    level("positive_1", "Gamma Resist.", positive1?.strike ?? callWall, positive1?.gex ?? 0, "#2fcf6f", {
+    level("positive_1", "Gamma Resist.", positive1?.strike ?? effectiveCallWall, positive1?.gex ?? 0, "#2fcf6f", {
       shortLabel: "P1",
       system: "positive",
       role: "Primary Positive Gamma Wall",
       description: "Largest positive gamma wall. Dealer hedging can dampen upside volatility and create resistance.",
     }),
-    level("absolute_1", "Magnet", absolute1?.strike ?? maxPainStrike, Math.abs(absolute1?.gex ?? 0), "#7d20ff", {
+    level("absolute_1", "Magnet", absolute1?.strike ?? effectiveMaxPainStrike, Math.abs(absolute1?.gex ?? 0), "#7d20ff", {
       shortLabel: "A1",
       system: "neutral",
       role: "Primary Absolute Gamma Wall",
       description: "Largest absolute gamma concentration. Price can pin or mean-revert around this magnet level.",
     }),
-    level("positive_2", "Gamma Resist.", positive2?.strike ?? callWall, positive2?.gex ?? positivePeak?.gex ?? 0, "#20b963", {
+    level("positive_2", "Gamma Resist.", positive2?.strike ?? effectiveCallWall, positive2?.gex ?? positivePeak?.gex ?? 0, "#20b963", {
       shortLabel: "P2",
       system: "positive",
       role: "Secondary Positive Gamma Wall",
       description: "Second positive gamma wall. It marks the broader volatility-dampening resistance zone.",
     }),
-    level("max_stability", "Max Stability", stabilityPoint?.strike ?? maxPainStrike, stabilityPoint?.gex ?? 0, "#1fcb6a", {
+    level("max_stability", "Max Stability", stabilityPoint?.strike ?? effectiveMaxPainStrike, stabilityPoint?.gex ?? 0, "#1fcb6a", {
       shortLabel: "S",
       system: "positive",
       role: "Stability Point",
@@ -527,13 +533,18 @@ function buildUiMetricsFromRows({
   return {
     symbol,
     asOf,
+    netGex: round(effectiveNetGex, 2),
+    gammaFlip: effectiveGammaFlip,
+    callWall: effectiveCallWall,
+    putWall: effectivePutWall,
+    maxPainStrike: effectiveMaxPainStrike,
     absoluteGex: round(absoluteGex, 2),
     positiveGex: round(positiveGex, 2),
     negativeGex: round(negativeGex, 2),
     callPutRatio: round(ratio(callAbs, putAbs), 3),
     upDownRatio: round(ratio(aboveAbs, belowAbs), 3),
     gauges: {
-      regime: round(clamp(netGex / Math.max(absoluteGex, 1), -1, 1), 3),
+      regime: round(clamp(effectiveNetGex / Math.max(absoluteGex, 1), -1, 1), 3),
       callPut: round(ratio(callAbs, putAbs), 3),
       upDown: round(ratio(aboveAbs, belowAbs), 3),
     },
@@ -543,12 +554,12 @@ function buildUiMetricsFromRows({
       absolute: peakShape(absolutePeak),
     },
     keyLevels: [
-      level("flip", "Flip Point", gammaFlip, netGex, "#ff00ff"),
-      level("max_stability", "Max Stability", stabilityPoint?.strike ?? maxPainStrike, stabilityPoint?.gex ?? 0, "#1fcb6a"),
-      level("max_volatility", "Max Volatility", volatilityPoint?.strike ?? gammaFlip, volatilityPoint?.gex ?? 0, "#e5384f"),
-      level("positive_peak", "Positive Peak", positivePeak?.strike ?? callWall, positivePeak?.gex ?? 0, "#31c46b"),
-      level("negative_peak", "Negative Peak", negativePeak?.strike ?? putWall, negativePeak?.gex ?? 0, "#e5384f"),
-      level("absolute_max", "Absolute Max", absolutePeak?.strike ?? maxPainStrike, absolutePeak?.gex ?? 0, "#7d20ff"),
+      level("flip", "Flip Point", effectiveGammaFlip, effectiveNetGex, "#ff00ff"),
+      level("max_stability", "Max Stability", stabilityPoint?.strike ?? effectiveMaxPainStrike, stabilityPoint?.gex ?? 0, "#1fcb6a"),
+      level("max_volatility", "Max Volatility", volatilityPoint?.strike ?? effectiveGammaFlip, volatilityPoint?.gex ?? 0, "#e5384f"),
+      level("positive_peak", "Positive Peak", positivePeak?.strike ?? effectiveCallWall, positivePeak?.gex ?? 0, "#31c46b"),
+      level("negative_peak", "Negative Peak", negativePeak?.strike ?? effectivePutWall, negativePeak?.gex ?? 0, "#e5384f"),
+      level("absolute_max", "Absolute Max", absolutePeak?.strike ?? effectiveMaxPainStrike, absolutePeak?.gex ?? 0, "#7d20ff"),
     ],
     studioKeyLevels,
     markerBands,

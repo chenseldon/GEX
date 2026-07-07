@@ -277,13 +277,13 @@ function gauge(label, value, state) {
 
 function summaryPayload(snapshot, ui) {
   return {
-    netGex: snapshot.netGex,
+    netGex: ui.netGex,
     netDelta: snapshot.netDelta,
     totalOpenInterest: snapshot.totalOpenInterest,
-    gammaFlip: snapshot.gammaFlip,
-    callWall: snapshot.callWall,
-    putWall: snapshot.putWall,
-    maxPainStrike: snapshot.maxPainStrike,
+    gammaFlip: ui.gammaFlip,
+    callWall: ui.callWall,
+    putWall: ui.putWall,
+    maxPainStrike: ui.maxPainStrike,
     absoluteGex: ui.absoluteGex,
     positiveGex: ui.positiveGex,
     negativeGex: ui.negativeGex,

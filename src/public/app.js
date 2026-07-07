@@ -168,10 +168,7 @@ function bindEvents() {
 
   els.expirySelect.addEventListener("change", async (event) => {
     state.expiry = event.target.value;
-    await loadStudio();
-    renderContextPicker();
-    renderStudio();
-    renderFocusedCharts();
+    await loadData();
   });
 
   els.refreshButton.addEventListener("click", () => loadData().catch(renderError));
@@ -414,6 +411,7 @@ async function loadData() {
     state.dashboard = dashboard;
     state.studio = studio;
     state.health = health;
+    state.crosshair = null;
     refreshRemaining = REFRESH_INTERVAL_SECONDS;
     if (state.category === "history") {
       await loadHistoryHeatmap();
@@ -2371,10 +2369,7 @@ function contextExpiryButton(value, row) {
     state.expiry = value;
     els.expirySelect.value = value;
     els.ctxModal.hidden = true;
-    await loadStudio();
-    renderContextPicker();
-    renderStudio();
-    renderFocusedCharts();
+    await loadData().catch(renderError);
   });
   return button;
 }

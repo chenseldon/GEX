@@ -73,6 +73,9 @@ export function createDeribitJsonRpcClient({
     getHistoricalVolatility(currency) {
       return call("public/get_historical_volatility", { currency });
     },
+    getIndexPrice(indexName) {
+      return call("public/get_index_price", { index_name: indexName });
+    },
     getOrderBook(instrumentName, depth = 20) {
       return call("public/get_order_book", {
         instrument_name: instrumentName,

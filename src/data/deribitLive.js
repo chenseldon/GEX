@@ -85,10 +85,11 @@ async function loadLiveSnapshot({ symbol, client, includeHistory }) {
       contracts.push(normalized.contract);
     }
   }
+  const spotPrice = await readLiveSpotPrice({ symbol, client, contracts, warnings });
 
   const snapshot = calculateGexSnapshot({
     symbol,
-    spotPrice: spotPriceFromContracts(contracts),
+    spotPrice,
     asOf: observedAt,
     contracts,
   });
@@ -127,4 +128,29 @@ async function readDuckDbHistory(symbol) {
 
 function spotPriceFromContracts(contracts) {
   return contracts.find((contract) => Number.isFinite(Number(contract.underlyingPrice)))?.underlyingPrice;
+}
+
+async function readLiveSpotPrice({ symbol, client, contracts, warnings }) {
+  if (typeof client.getIndexPrice === "function") {
+    for (const indexName of deribitIndexNames(symbol)) {
+      try {
+        const result = await client.getIndexPrice(indexName);
+        const value = Number(result?.index_price ?? result);
+        if (Number.isFinite(value) && value > 0) {
+          return value;
+        }
+      } catch (error) {
+        warnings.push({
+          instrumentName: `${symbol}-INDEX`,
+          reason: `index price unavailable for ${indexName}: ${error.message}`,
+        });
+      }
+    }
+  }
+  return spotPriceFromContracts(contracts);
+}
+
+function deribitIndexNames(symbol) {
+  const normalized = String(symbol).toLowerCase();
+  return [`${normalized}_usd`, `${normalized}_usdc`];
 }
