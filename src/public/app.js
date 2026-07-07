@@ -233,6 +233,7 @@ function bindEvents() {
       await loadHistoryHeatmap();
     } else {
       activateLiveSnapshot();
+      renderStudio();
       await loadData();
       return;
     }
@@ -364,7 +365,12 @@ function bindStudioChartInteractions() {
     }
     if (["expiry", "history"].includes(state.category)) return;
     const strike = strikeFromPointer(event);
-    if (strike) state.crosshair = strike;
+    if (strike) {
+      state.crosshair = {
+        strike,
+        yRatio: chartPointerYRatio(event),
+      };
+    }
     if (dragStart) {
       const delta = event.clientX - dragStart.x;
       state.panOffset = clamp(dragStart.panOffset - delta / 240, -3, 3);
@@ -980,11 +986,11 @@ function renderMarkerChips(levels) {
       `;
       node.addEventListener("click", () => {
         state.selectedMarkerId = state.selectedMarkerId === level.id ? "" : level.id;
-        state.crosshair = level.strike;
+        state.crosshair = { strike: level.strike, yRatio: 0.5 };
         renderStudio();
       });
       node.addEventListener("mouseenter", () => {
-        state.crosshair = level.strike;
+        state.crosshair = { strike: level.strike, yRatio: 0.5 };
         renderStudioMainChart();
       });
       return node;
@@ -2267,12 +2273,16 @@ function renderDualStrikeChart(
   line(svg, x(spotPrice), pad.top, x(spotPrice), height - pad.bottom, "#e5eef8", "4 4", "spot-line");
   markerLabel(svg, x(spotPrice), topBottom + 16, price(spotPrice), "#e5eef8", true);
 
-  if (Number.isFinite(crosshair)) {
-    const boundedStrike = clamp(crosshair, minStrike, maxStrike);
+  const crosshairStrike = typeof crosshair === "object" && crosshair !== null ? crosshair.strike : crosshair;
+  const crosshairYRatio = typeof crosshair === "object" && crosshair !== null ? crosshair.yRatio : 0.5;
+  if (Number.isFinite(crosshairStrike)) {
+    const boundedStrike = clamp(crosshairStrike, minStrike, maxStrike);
     const crossX = x(boundedStrike);
+    const crossY = clamp(pad.top + crosshairYRatio * (height - pad.bottom - pad.top), pad.top, height - pad.bottom);
     line(svg, crossX, pad.top, crossX, height - pad.bottom, "#e5eef8", "2 3", "crosshair-line");
-    line(svg, pad.left, zeroY, width - pad.right, zeroY, "#e5eef8", "2 6", "crosshair-line faint");
-    markerLabel(svg, crossX, height - 70, formatStrike(boundedStrike), "#e5eef8", true);
+    line(svg, pad.left, crossY, width - pad.right, crossY, "#e5eef8", "2 6", "crosshair-line faint");
+    circle(svg, crossX, crossY, 4, "#e5eef8", "crosshair-dot");
+    markerLabel(svg, crossX, clamp(crossY + 18, pad.top + 18, height - pad.bottom - 8), formatStrike(boundedStrike), "#e5eef8", true);
   }
 
   label(svg, 20, 160, "Net GEX", "axis-title");
@@ -2437,6 +2447,11 @@ function strikeFromPointer(event) {
   const rect = els.studioStrikeChart.getBoundingClientRect();
   const percent = clamp((event.clientX - rect.left) / Math.max(rect.width, 1), 0, 1);
   return domain.min + (domain.max - domain.min) * percent;
+}
+
+function chartPointerYRatio(event) {
+  const rect = els.studioStrikeChart.getBoundingClientRect();
+  return clamp((event.clientY - rect.top) / Math.max(rect.height, 1), 0, 1);
 }
 
 function visibleStrikeDomain() {

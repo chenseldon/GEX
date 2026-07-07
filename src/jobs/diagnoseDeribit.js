@@ -1,11 +1,17 @@
 import { diagnoseDeribitConnectivity } from "../integrations/deribitDiagnostics.js";
 
 const args = parseArgs(process.argv.slice(2));
+if (args.proxy) {
+  process.env.DERIBIT_PROXY_URL = args.proxy;
+}
+if (args.endpoint) {
+  process.env.DERIBIT_ENDPOINT = args.endpoint;
+}
 
 const report = await diagnoseDeribitConnectivity({
   endpoint: args.endpoint ?? process.env.DERIBIT_ENDPOINT,
   symbol: args.symbol ?? "BTC",
-  proxyUrl: process.env.DERIBIT_PROXY_URL ?? null,
+  proxyUrl: args.proxy ?? process.env.DERIBIT_PROXY_URL ?? null,
 });
 
 console.log(JSON.stringify(report, null, 2));

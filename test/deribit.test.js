@@ -43,6 +43,27 @@ test("Deribit JSON-RPC client posts method and params", async () => {
   assert.deepEqual(result, [{ instrument_name: "BTC-26JUL24-60000-C" }]);
 });
 
+test("Deribit public client falls back to REST GET when JSON-RPC POST is blocked", async () => {
+  const calls = [];
+  const client = createDeribitJsonRpcClient({
+    endpoint: "https://example.test/api/v2",
+    fetchImpl: async (url, options) => {
+      calls.push({ url: String(url), method: options.method });
+      if (options.method === "POST") {
+        return new Response("", { status: 405 });
+      }
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: [{ instrument_name: "BTC-26JUL24-60000-C" }] }));
+    },
+  });
+
+  const result = await client.getInstruments("BTC");
+
+  assert.equal(calls[0].method, "POST");
+  assert.equal(calls[1].method, "GET");
+  assert.equal(calls[1].url, "https://example.test/api/v2/public/get_instruments?currency=BTC&kind=option&expired=false");
+  assert.deepEqual(result, [{ instrument_name: "BTC-26JUL24-60000-C" }]);
+});
+
 test("Deribit client default transport reads DERIBIT_PROXY_URL", () => {
   const previousProxy = process.env.DERIBIT_PROXY_URL;
   const previousEndpoint = process.env.DERIBIT_ENDPOINT;

@@ -167,9 +167,11 @@ test("buildUiMetrics ranks negative walls by magnitude and places stability on t
   const metrics = buildUiMetrics(snapshot);
   const n1 = metrics.studioKeyLevels.find((level) => level.id === "negative_1");
   const n2 = metrics.studioKeyLevels.find((level) => level.id === "negative_2");
+  const flip = metrics.studioKeyLevels.find((level) => level.id === "flip");
   const stability = metrics.studioKeyLevels.find((level) => level.id === "max_stability");
 
   assert.equal(Math.abs(n1.value) >= Math.abs(n2.value), true);
+  assert.equal(flip.strike > 95 && flip.strike < 105, true);
   assert.equal(stability.strike >= snapshot.spotPrice, true);
   assert.equal(stability.strike >= Math.max(n1.strike, n2.strike), true);
 });

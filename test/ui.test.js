@@ -90,7 +90,7 @@ test("Live snapshot resumes after history, symbol, and expiry changes", () => {
     "let queuedLoadData = false;",
     "queuedLoadData = true;",
     "if (queuedLoadData) {",
-    "activateLiveSnapshot();\n      await loadData();\n      return;",
+    "activateLiveSnapshot();\n      renderStudio();\n      await loadData();\n      return;",
     "els.expirySelect.addEventListener(\"change\"",
     "button.addEventListener(\"click\", async () => {\n    state.expiry = value;\n    activateLiveSnapshot();",
   ].forEach((needle) => {

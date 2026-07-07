@@ -34,12 +34,41 @@ export function createDeribitJsonRpcClient({
     });
 
     if (!response.ok) {
+      if (response.status === 405 && method.startsWith("public/")) {
+        return callPublicRest(method, params);
+      }
       throw new Error(`Deribit HTTP ${response.status} for ${method}`);
     }
 
     const payload = await response.json();
     if (payload.error) {
       const message = payload.error.message ?? "Unknown Deribit JSON-RPC error";
+      throw new Error(`Deribit ${method} failed: ${message}`);
+    }
+
+    return payload.result;
+  }
+
+  async function callPublicRest(method, params = {}) {
+    const url = new URL(`${endpoint.replace(/\/$/, "")}/${method}`);
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== null) {
+        url.searchParams.set(key, String(value));
+      }
+    }
+
+    const response = await fetchImpl(url, {
+      method: "GET",
+      headers: { accept: "application/json" },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Deribit HTTP ${response.status} for ${method}`);
+    }
+
+    const payload = await response.json();
+    if (payload.error) {
+      const message = payload.error.message ?? "Unknown Deribit REST error";
       throw new Error(`Deribit ${method} failed: ${message}`);
     }
 

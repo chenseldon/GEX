@@ -146,7 +146,8 @@ export function createApiHandler() {
         const rows = expiry
           ? snapshot.byStrike.filter((row) => row.expiry === expiry)
           : snapshot.byStrike;
-        const ui = buildUiMetrics({ ...snapshot, byStrike: rows });
+        const scopedSnapshot = { ...snapshot, byStrike: rows };
+        const ui = buildUiMetrics(scopedSnapshot);
         const trends = buildRealTrendSeries(snapshot);
         return json({
           symbol: snapshot.symbol,
@@ -158,18 +159,18 @@ export function createApiHandler() {
           rows,
           expiries: snapshot.byExpiry,
           markers: {
-            gammaFlip: snapshot.gammaFlip,
-            callWall: snapshot.callWall,
-            putWall: snapshot.putWall,
-            maxPainStrike: snapshot.maxPainStrike,
+            gammaFlip: ui.gammaFlip,
+            callWall: ui.callWall,
+            putWall: ui.putWall,
+            maxPainStrike: ui.maxPainStrike,
             peaks: ui.peaks,
             keyLevels: ui.studioKeyLevels,
             bands: ui.markerBands,
           },
           summary: summaryPayload(snapshot, ui),
-          summaryRail: buildSummaryRail({ ...snapshot, byStrike: rows }, trends),
+          summaryRail: buildSummaryRail(scopedSnapshot, trends),
           trends,
-          forecast: buildForecastInput(snapshot),
+          forecast: buildForecastInput({ ...scopedSnapshot, gammaFlip: ui.gammaFlip, netGex: ui.netGex }),
         });
       }
 

@@ -7,9 +7,10 @@
   "scripts": {
     "start": "node src/server/server.js",
     "test": "node --test",
-    "check": "node --check src/domain/gex.js && node --check src/server/api.js && node --check src/server/server.js && node --check src/public/app.js && node --check src/integrations/deribitClient.js && node --check src/integrations/deribitDiagnostics.js && node --check src/integrations/deribitNormalize.js && node --check src/data/duckdbRepository.js && node --check src/data/deribitCollector.js && node --check src/data/deribitLive.js && node --check src/jobs/initDuckDb.js && node --check src/jobs/collectDeribitSnapshot.js && node --check src/jobs/diagnoseDeribit.js && node --check src/jobs/measureDeribitLatency.js",
+    "check": "node --check src/domain/gex.js && node --check src/server/api.js && node --check src/server/server.js && node --check src/public/app.js && node --check src/integrations/deribitClient.js && node --check src/integrations/deribitDiagnostics.js && node --check src/integrations/deribitNormalize.js && node --check src/data/duckdbRepository.js && node --check src/data/deribitCollector.js && node --check src/data/deribitLive.js && node --check src/jobs/initDuckDb.js && node --check src/jobs/collectDeribitSnapshot.js && node --check src/jobs/diagnoseDeribit.js && node --check src/jobs/measureDeribitLatency.js && node --check src/jobs/scheduleDailyDeribitCollector.js",
     "db:init": "node src/jobs/initDuckDb.js",
     "collect:deribit": "node src/jobs/collectDeribitSnapshot.js",
+    "schedule:deribit:daily": "node src/jobs/scheduleDailyDeribitCollector.js",
     "diagnose:deribit": "node src/jobs/diagnoseDeribit.js",
     "latency:deribit": "node src/jobs/measureDeribitLatency.js",
     "inspect:duckdb": "node -e \"import('./src/data/duckdbRepository.js').then(async ({createDuckDbRepository}) => { const repo = await createDuckDbRepository(); console.log(JSON.stringify(await repo.getHealth(), null, 2)); repo.close(); })\""

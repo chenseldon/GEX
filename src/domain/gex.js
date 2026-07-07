@@ -428,7 +428,8 @@ function buildUiMetricsFromRows({
 }) {
   const rows = collapseStrikeRows(byStrike);
   const effectiveNetGex = rows.reduce((sum, row) => sum + row.gex, 0);
-  const effectiveGammaFlip = rows.length ? calculateGammaFlip(rows, spotPrice, effectiveNetGex) : gammaFlip;
+  const modelGammaFlip = rows.length ? calculateGammaFlip(rows, spotPrice, effectiveNetGex) : gammaFlip;
+  const effectiveGammaFlip = rows.length ? calculateStrikeSignFlip(rows, spotPrice, modelGammaFlip) : gammaFlip;
   const effectiveCallWall = maxBy(rows, (row) => Math.abs(row.callGex))?.strike ?? callWall;
   const effectivePutWall = maxBy(rows, (row) => Math.abs(row.putGex))?.strike ?? putWall;
   const effectiveMaxPainStrike = maxPainStrike;
@@ -713,6 +714,41 @@ function calculateGammaFlip(byStrike, spotPrice, netGex) {
   }
 
   return sorted[0].strike;
+}
+
+function calculateStrikeSignFlip(byStrike, spotPrice, fallback) {
+  const sorted = [...byStrike]
+    .filter((row) => Number.isFinite(row.strike) && Number.isFinite(row.gex))
+    .sort((a, b) => a.strike - b.strike);
+  const candidates = [];
+
+  for (let index = 1; index < sorted.length; index += 1) {
+    const previous = sorted[index - 1];
+    const current = sorted[index];
+    if (previous.gex < 0 && current.gex >= 0) {
+      candidates.push(interpolateSignBoundary(previous, current));
+    }
+  }
+
+  if (candidates.length > 0) {
+    return round(candidates.sort((a, b) => Math.abs(a - spotPrice) - Math.abs(b - spotPrice))[0], 2);
+  }
+
+  const highestNegative = sorted.filter((row) => row.gex < 0).at(-1);
+  const lowestPositive = sorted.find((row) => row.gex >= 0);
+  if (highestNegative && lowestPositive) {
+    return round((highestNegative.strike + lowestPositive.strike) / 2, 2);
+  }
+
+  return fallback;
+}
+
+function interpolateSignBoundary(previous, current) {
+  const total = Math.abs(previous.gex) + Math.abs(current.gex);
+  if (total === 0) {
+    return current.strike;
+  }
+  return previous.strike + (current.strike - previous.strike) * (Math.abs(previous.gex) / total);
 }
 
 function clamp(value, min, max) {

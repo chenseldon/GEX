@@ -37,6 +37,7 @@ npm.cmd run db:init
 npm.cmd run diagnose:deribit
 npm.cmd run latency:deribit -- --symbols=BTC,ETH --samples=5
 npm.cmd run collect:deribit -- --symbols=BTC,ETH --once
+npm.cmd run schedule:deribit:daily -- --time=07:00 --symbols=BTC,ETH
 npm.cmd run inspect:duckdb
 ```
 
@@ -73,10 +74,13 @@ npm.cmd run diagnose:deribit
 npm.cmd run latency:deribit -- --symbols=BTC,ETH --samples=5
 npm.cmd run collect:deribit -- --symbols=BTC,ETH --once
 npm.cmd run collect:deribit -- --symbols=BTC,ETH --interval=60000
+npm.cmd run schedule:deribit:daily -- --time=07:00 --symbols=BTC,ETH
 npm.cmd run inspect:duckdb
 ```
 
 The local database defaults to `.data/gex.duckdb` and is ignored by Git. The collector stores raw Deribit payloads plus normalized fields for instruments, option tickers, index prices, and source-run health. Set `GEX_DB_PATH` to move the database. The collector defaults to `public/get_book_summary_by_currency`, so a full BTC/ETH snapshot usually takes seconds rather than hundreds of per-instrument ticker calls.
+
+The daily scheduler command creates a Windows Task Scheduler job named `GEX Deribit Daily Snapshot`. It runs at local machine time, so `--time=07:00` means Beijing 07:00 when Windows is set to Asia/Shanghai. This records one forward-looking snapshot per day; Deribit public APIs do not provide full historical option-chain state for arbitrary past timestamps, so dense History heatmaps require running the interval collector continuously, for example `--interval=600000` for 10-minute snapshots.
 
 Observed proxy-path latency on this workstation on 2026-07-07:
 
@@ -106,6 +110,7 @@ Optional future auth placeholders:
 DERIBIT_ENV=prod|testnet
 DERIBIT_ENDPOINT=https://www.deribit.com/api/v2
 DERIBIT_PROXY_URL=socks5h://127.0.0.1:7890
+DERIBIT_AUTO_PROXY=0
 DERIBIT_REALTIME=1
 DERIBIT_REALTIME_TTL_MS=30000
 DERIBIT_COLLECTOR_MODE=summary|ticker
