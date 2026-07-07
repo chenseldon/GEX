@@ -149,6 +149,31 @@ test("buildUiMetrics returns bounded gauges and all V2 key levels", () => {
   assert.equal(typeof metrics.peaks.negative.strike, "number");
 });
 
+test("buildUiMetrics ranks negative walls by magnitude and places stability on the right side", () => {
+  const snapshot = calculateGexSnapshot({
+    symbol: "BTC",
+    spotPrice: 100,
+    asOf: "2024-07-01T12:00:00.000Z",
+    contracts: [
+      optionContract("BTC-26JUL24-80-P", 80, "put", 1300),
+      optionContract("BTC-26JUL24-90-P", 90, "put", 2800),
+      optionContract("BTC-26JUL24-95-P", 95, "put", 900),
+      optionContract("BTC-26JUL24-105-C", 105, "call", 1600),
+      optionContract("BTC-26JUL24-115-C", 115, "call", 1500),
+      optionContract("BTC-26JUL24-130-C", 130, "call", 800),
+    ],
+  });
+
+  const metrics = buildUiMetrics(snapshot);
+  const n1 = metrics.studioKeyLevels.find((level) => level.id === "negative_1");
+  const n2 = metrics.studioKeyLevels.find((level) => level.id === "negative_2");
+  const stability = metrics.studioKeyLevels.find((level) => level.id === "max_stability");
+
+  assert.equal(Math.abs(n1.value) >= Math.abs(n2.value), true);
+  assert.equal(stability.strike >= snapshot.spotPrice, true);
+  assert.equal(stability.strike >= Math.max(n1.strike, n2.strike), true);
+});
+
 test("buildChangeTable expands rows as coverage increases", () => {
   const snapshot = calculateGexSnapshot({
     symbol: "BTC",
@@ -164,6 +189,20 @@ test("buildChangeTable expands rows as coverage increases", () => {
   assert.equal(topHalf.periods.includes("24h"), true);
   assert.equal(allRows.rows.length > topHalf.rows.length, true);
 });
+
+function optionContract(instrumentName, strike, optionType, openInterest) {
+  return {
+    instrumentName,
+    underlyingPrice: 100,
+    strike,
+    expiry: "2024-07-26",
+    optionType,
+    impliedVolatility: 0.6,
+    openInterest,
+    volume: 100,
+    markPrice: 0.04,
+  };
+}
 
 test("buildTrendSeries and buildHeatmapMatrix are deterministic and non-empty", () => {
   const snapshot = calculateGexSnapshot({

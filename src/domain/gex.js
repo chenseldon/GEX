@@ -445,26 +445,20 @@ function buildUiMetricsFromRows({
   const positiveRanked = positiveRows.slice().sort((a, b) => b.gex - a.gex || a.strike - b.strike);
   const negativeRanked = negativeRows.slice().sort((a, b) => Math.abs(b.gex) - Math.abs(a.gex) || a.strike - b.strike);
   const absoluteRanked = rows.slice().sort((a, b) => Math.abs(b.gex) - Math.abs(a.gex) || a.strike - b.strike);
-  const negativeBelowSpot = negativeRows
-    .slice()
-    .filter((row) => row.strike < spotPrice)
-    .sort((a, b) => b.strike - a.strike || Math.abs(b.gex) - Math.abs(a.gex));
-  const negativeByDistance = negativeRows
-    .slice()
-    .sort((a, b) => Math.abs(a.strike - spotPrice) - Math.abs(b.strike - spotPrice) || Math.abs(b.gex) - Math.abs(a.gex));
-  const negative1 = negativeBelowSpot[0] ?? negativeByDistance[0] ?? negativePeak;
-  const negative2 = negativeBelowSpot.find((row) => row.strike !== negative1?.strike)
-    ?? negativeByDistance.find((row) => row.strike !== negative1?.strike)
-    ?? negativeRanked[1]
+  const negative1 = negativeRanked[0] ?? negativePeak;
+  const negative2 = negativeRanked.find((row) => row.strike !== negative1?.strike)
     ?? negative1;
   const volatilityPoint = negativeRanked[0] ?? negativePeak ?? absolutePeak;
-  const stabilityWindow = Math.max(Math.abs(spotPrice) * 0.18, 1);
-  const stabilityCandidates = rows.filter((row) => row.openInterest > 0 && Math.abs(row.strike - spotPrice) <= stabilityWindow);
-  const stabilityPoint = (stabilityCandidates.length ? stabilityCandidates : rows)
-    .slice()
-    .sort((a, b) => Math.abs(a.gex) - Math.abs(b.gex) || Math.abs(a.strike - spotPrice) - Math.abs(b.strike - spotPrice))[0];
   const positive1 = positiveRanked[0] ?? positivePeak;
   const positive2 = positiveRanked.find((row) => row.strike !== positive1?.strike) ?? positiveRanked[1] ?? positive1;
+  const stabilityThreshold = Math.max(Math.abs(positivePeak?.gex ?? 0) * 0.25, 1);
+  const stabilityCandidates = positiveRows
+    .filter((row) => row.strike >= spotPrice && row.gex >= stabilityThreshold)
+    .slice()
+    .sort((a, b) => b.strike - a.strike || b.gex - a.gex);
+  const stabilityPoint = stabilityCandidates[0]
+    ?? positiveRows.filter((row) => row.strike >= spotPrice).sort((a, b) => b.strike - a.strike || b.gex - a.gex)[0]
+    ?? positive1;
   const absolute1 = absoluteRanked[0] ?? absolutePeak;
   const absolute2 = absoluteRanked.find((row) => row.strike !== absolute1?.strike) ?? absoluteRanked[1] ?? absolute1;
   const vOverlapsN1 = volatilityPoint?.strike === negative1?.strike;
@@ -485,7 +479,7 @@ function buildUiMetricsFromRows({
       shortLabel: "N1",
       system: "negative",
       role: "Primary Negative Gamma Wall",
-      description: "Nearest core negative gamma trigger below spot. Treat it as trend acceleration risk, not automatic support.",
+      description: "Largest negative gamma wall by absolute exposure. Treat it as trend acceleration risk, not automatic support.",
     }),
     level("flip", "Regime Change", gammaFlip, 0, "#ff00ff", {
       shortLabel: "F",
@@ -521,7 +515,7 @@ function buildUiMetricsFromRows({
       shortLabel: "S",
       system: "positive",
       role: "Stability Point",
-      description: "Strike where net gamma is closest to balanced. It is a reference for mean-reversion and range behavior.",
+      description: "Right-side strong positive gamma stability wall. A move into this zone can dampen volatility and favor range behavior.",
     }),
   ]);
   const markerBands = [

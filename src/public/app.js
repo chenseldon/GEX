@@ -32,6 +32,10 @@ const state = {
 };
 
 let forecastCache = null;
+const REFRESH_INTERVAL_SECONDS = 60;
+let refreshRemaining = REFRESH_INTERVAL_SECONDS;
+let refreshTimer = null;
+let loadingData = false;
 const defaultForecastInput = {
   symbol: "BTC",
   startPrice: 77134,
@@ -148,6 +152,7 @@ async function init() {
   bindEvents();
   renderSymbolTabs();
   await loadData();
+  startRefreshClock();
 }
 
 function bindEvents() {
@@ -169,7 +174,7 @@ function bindEvents() {
     renderFocusedCharts();
   });
 
-  els.refreshButton.addEventListener("click", loadData);
+  els.refreshButton.addEventListener("click", () => loadData().catch(renderError));
   els.ctxTrigger.addEventListener("click", () => openModal(els.ctxModal));
   els.productSwitchButton.addEventListener("click", () => toggleHidden(els.productMenu));
   els.dashboardCsvButton.addEventListener("click", () => exportCsv(state.dashboard?.rows ?? []));
@@ -194,6 +199,7 @@ function bindEvents() {
 
   els.liveToggle.addEventListener("change", (event) => {
     state.live = event.target.checked;
+    refreshRemaining = REFRESH_INTERVAL_SECONDS;
     renderLiveState();
   });
 
@@ -208,6 +214,7 @@ function bindEvents() {
   els.tmPlayButton.addEventListener("click", () => {
     state.live = !state.live;
     els.liveToggle.checked = state.live;
+    refreshRemaining = REFRESH_INTERVAL_SECONDS;
     els.tmPlayButton.textContent = state.live ? "Pause" : "Play";
     renderLiveState();
   });
@@ -221,6 +228,7 @@ function bindEvents() {
     if (state.category === "history") {
       state.live = false;
       els.liveToggle.checked = false;
+      refreshRemaining = REFRESH_INTERVAL_SECONDS;
       renderLiveState();
       await loadHistoryHeatmap();
     }
@@ -395,18 +403,25 @@ function bindStudioChartInteractions() {
 }
 
 async function loadData() {
-  const [dashboard, studio, health] = await Promise.all([
-    api(`/api/gex/dashboard?symbol=${state.symbol}&coverage=${state.coverage}`),
-    api(`/api/gex/studio?symbol=${state.symbol}${state.expiry ? `&expiry=${state.expiry}` : ""}&mode=${state.mode}`),
-    api("/api/data-health"),
-  ]);
-  state.dashboard = dashboard;
-  state.studio = studio;
-  state.health = health;
-  if (state.category === "history") {
-    await loadHistoryHeatmap();
+  if (loadingData) return;
+  loadingData = true;
+  try {
+    const [dashboard, studio, health] = await Promise.all([
+      api(`/api/gex/dashboard?symbol=${state.symbol}&coverage=${state.coverage}`),
+      api(`/api/gex/studio?symbol=${state.symbol}${state.expiry ? `&expiry=${state.expiry}` : ""}&mode=${state.mode}`),
+      api("/api/data-health"),
+    ]);
+    state.dashboard = dashboard;
+    state.studio = studio;
+    state.health = health;
+    refreshRemaining = REFRESH_INTERVAL_SECONDS;
+    if (state.category === "history") {
+      await loadHistoryHeatmap();
+    }
+    renderAll();
+  } finally {
+    loadingData = false;
   }
-  renderAll();
 }
 
 async function loadStudio() {
@@ -2111,8 +2126,26 @@ function renderHealth() {
   `;
 }
 
+function startRefreshClock() {
+  clearInterval(refreshTimer);
+  refreshTimer = setInterval(() => {
+    if (!state.live || state.category === "history") {
+      renderLiveState();
+      return;
+    }
+    refreshRemaining = Math.max(0, refreshRemaining - 1);
+    renderLiveState();
+    if (refreshRemaining === 0 && !loadingData) {
+      loadData().catch((error) => {
+        refreshRemaining = REFRESH_INTERVAL_SECONDS;
+        renderError(error);
+      });
+    }
+  }, 1000);
+}
+
 function renderLiveState() {
-  els.refreshButton.textContent = state.category === "history" ? "↻" : state.live ? "50s" : "Paused";
+  els.refreshButton.textContent = state.category === "history" ? "↻" : state.live ? `${refreshRemaining}s` : "Paused";
   const point = state.dashboard?.trends?.points?.[state.timeIndex];
   if (point) {
     els.dataTimestamp.textContent = `${formatTimestamp(state.dashboard.asOf)} · ${point.time}`;
