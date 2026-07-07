@@ -1,6 +1,12 @@
 import { measureDeribitLatency } from "../data/deribitLive.js";
 
 const args = parseArgs(process.argv.slice(2));
+if (args.proxy) {
+  process.env.DERIBIT_PROXY_URL = args.proxy;
+}
+if (args.endpoint) {
+  process.env.DERIBIT_ENDPOINT = args.endpoint;
+}
 const symbols = (args.symbols ?? args.symbol ?? "BTC,ETH")
   .split(",")
   .map((symbol) => symbol.trim().toUpperCase())

@@ -7,6 +7,7 @@ import test from "node:test";
 import { createApiHandler } from "../src/server/api.js";
 import {
   createDeribitJsonRpcClient,
+  defaultDeribitProxyUrl,
   createDeribitProxyAgent,
   createDeribitTransportConfig,
 } from "../src/integrations/deribitClient.js";
@@ -58,6 +59,35 @@ test("Deribit client default transport reads DERIBIT_PROXY_URL", () => {
     else process.env.DERIBIT_PROXY_URL = previousProxy;
     if (previousEndpoint === undefined) delete process.env.DERIBIT_ENDPOINT;
     else process.env.DERIBIT_ENDPOINT = previousEndpoint;
+  }
+});
+
+test("Deribit default proxy falls back to local Clash unless disabled", () => {
+  const previous = {
+    DERIBIT_PROXY_URL: process.env.DERIBIT_PROXY_URL,
+    DERIBIT_AUTO_PROXY: process.env.DERIBIT_AUTO_PROXY,
+    HTTPS_PROXY: process.env.HTTPS_PROXY,
+    https_proxy: process.env.https_proxy,
+    HTTP_PROXY: process.env.HTTP_PROXY,
+    http_proxy: process.env.http_proxy,
+    ALL_PROXY: process.env.ALL_PROXY,
+    all_proxy: process.env.all_proxy,
+  };
+
+  try {
+    for (const key of Object.keys(previous)) {
+      delete process.env[key];
+    }
+
+    assert.equal(defaultDeribitProxyUrl(), "http://127.0.0.1:7897");
+
+    process.env.DERIBIT_AUTO_PROXY = "0";
+    assert.equal(defaultDeribitProxyUrl(), null);
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   }
 });
 

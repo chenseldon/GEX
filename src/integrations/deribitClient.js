@@ -6,11 +6,12 @@ import { SocksProxyAgent } from "socks-proxy-agent";
 
 const PROD_ENDPOINT = "https://www.deribit.com/api/v2";
 const TESTNET_ENDPOINT = "https://test.deribit.com/api/v2";
+const DEFAULT_LOCAL_PROXY_URL = "http://127.0.0.1:7897";
 
 export function createDeribitJsonRpcClient({
   endpoint = defaultDeribitEndpoint(),
   fetchImpl = createDeribitFetch({
-    proxyUrl: process.env.DERIBIT_PROXY_URL,
+    proxyUrl: defaultDeribitProxyUrl(),
     timeoutMs: Number(process.env.DERIBIT_TIMEOUT_MS ?? 10_000),
   }),
 } = {}) {
@@ -106,9 +107,24 @@ export function defaultDeribitEndpoint() {
 export function createDeribitTransportConfig() {
   return {
     endpoint: defaultDeribitEndpoint(),
-    proxyUrl: process.env.DERIBIT_PROXY_URL ?? null,
+    proxyUrl: defaultDeribitProxyUrl(),
     timeoutMs: Number(process.env.DERIBIT_TIMEOUT_MS ?? 10_000),
   };
+}
+
+export function defaultDeribitProxyUrl() {
+  const explicitProxy = process.env.DERIBIT_PROXY_URL;
+  if (explicitProxy) {
+    return explicitProxy;
+  }
+
+  for (const key of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]) {
+    if (process.env[key]) {
+      return process.env[key];
+    }
+  }
+
+  return process.env.DERIBIT_AUTO_PROXY === "0" ? null : DEFAULT_LOCAL_PROXY_URL;
 }
 
 export function createDeribitFetch({ proxyUrl, timeoutMs = 10_000 } = {}) {

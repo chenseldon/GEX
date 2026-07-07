@@ -83,6 +83,21 @@ test("Studio chart supports GammaFlip-style chart interactions", () => {
   });
 });
 
+test("Live snapshot resumes after history, symbol, and expiry changes", () => {
+  [
+    "function activateLiveSnapshot()",
+    "state.crosshair = null;",
+    "let queuedLoadData = false;",
+    "queuedLoadData = true;",
+    "if (queuedLoadData) {",
+    "activateLiveSnapshot();\n      await loadData();\n      return;",
+    "els.expirySelect.addEventListener(\"change\"",
+    "button.addEventListener(\"click\", async () => {\n    state.expiry = value;\n    activateLiveSnapshot();",
+  ].forEach((needle) => {
+    assert.match(app, new RegExp(escapeRegExp(needle)));
+  });
+});
+
 test("V2 shell mirrors observed GammaFlip picker and reach vocabulary", () => {
   [
     "GEX Studio",

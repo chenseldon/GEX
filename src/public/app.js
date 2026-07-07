@@ -36,6 +36,7 @@ const REFRESH_INTERVAL_SECONDS = 60;
 let refreshRemaining = REFRESH_INTERVAL_SECONDS;
 let refreshTimer = null;
 let loadingData = false;
+let queuedLoadData = false;
 const defaultForecastInput = {
   symbol: "BTC",
   startPrice: 77134,
@@ -168,6 +169,7 @@ function bindEvents() {
 
   els.expirySelect.addEventListener("change", async (event) => {
     state.expiry = event.target.value;
+    activateLiveSnapshot();
     await loadData();
   });
 
@@ -196,6 +198,7 @@ function bindEvents() {
 
   els.liveToggle.addEventListener("change", (event) => {
     state.live = event.target.checked;
+    state.crosshair = null;
     refreshRemaining = REFRESH_INTERVAL_SECONDS;
     renderLiveState();
   });
@@ -228,6 +231,10 @@ function bindEvents() {
       refreshRemaining = REFRESH_INTERVAL_SECONDS;
       renderLiveState();
       await loadHistoryHeatmap();
+    } else {
+      activateLiveSnapshot();
+      await loadData();
+      return;
     }
     renderStudio();
   });
@@ -399,8 +406,19 @@ function bindStudioChartInteractions() {
   );
 }
 
+function activateLiveSnapshot() {
+  state.live = true;
+  state.crosshair = null;
+  refreshRemaining = REFRESH_INTERVAL_SECONDS;
+  els.liveToggle.checked = true;
+  renderLiveState();
+}
+
 async function loadData() {
-  if (loadingData) return;
+  if (loadingData) {
+    queuedLoadData = true;
+    return false;
+  }
   loadingData = true;
   try {
     const [dashboard, studio, health] = await Promise.all([
@@ -417,8 +435,13 @@ async function loadData() {
       await loadHistoryHeatmap();
     }
     renderAll();
+    return true;
   } finally {
     loadingData = false;
+    if (queuedLoadData) {
+      queuedLoadData = false;
+      await loadData();
+    }
   }
 }
 
@@ -460,6 +483,7 @@ function renderSymbolTabs() {
       button.addEventListener("click", async () => {
         state.symbol = instrument.symbol;
         state.expiry = "";
+        activateLiveSnapshot();
         renderSymbolTabs();
         await loadData();
       });
@@ -480,6 +504,7 @@ function renderContextPicker() {
       button.addEventListener("click", async () => {
         state.symbol = instrument.symbol;
         state.expiry = "";
+        activateLiveSnapshot();
         els.ctxModal.hidden = true;
         await loadData();
       });
@@ -2367,6 +2392,7 @@ function contextExpiryButton(value, row) {
     : `<span class="expiry-badge ${expiryBucket(value)}">${expiryBucket(value)}</span><strong>${formatExpiryCode(value)}</strong><span>|GEX| ${money(absGex)}</span>`;
   button.addEventListener("click", async () => {
     state.expiry = value;
+    activateLiveSnapshot();
     els.expirySelect.value = value;
     els.ctxModal.hidden = true;
     await loadData().catch(renderError);
