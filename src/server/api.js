@@ -10,6 +10,30 @@ import { instruments, optionChains, SAMPLE_AS_OF } from "../domain/sampleData.js
 import { createDuckDbRepository, getDuckDbPath } from "../data/duckdbRepository.js";
 import { getLiveDeribitSnapshot, measureDeribitLatency } from "../data/deribitLive.js";
 
+const TRADFI_CATALOG = [
+  { symbol: "CN.CFFEX.IF", name: "CSI 300 Index Options (AKShare IF alias)", venue: "CFFEX", exchanges: ["CFFEX"], group: "China Index/ETF Options", connector: "akshare", supportStatus: "partial" },
+  { symbol: "CN.CFFEX.IO", name: "CSI 300 Index Options", venue: "CFFEX", exchanges: ["CFFEX"], group: "China Index/ETF Options", connector: "akshare", supportStatus: "partial" },
+  { symbol: "CN.CFFEX.MO", name: "CSI 1000 Index Options", venue: "CFFEX", exchanges: ["CFFEX"], group: "China Index/ETF Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.CFFEX.HO", name: "SSE 50 Index Options", venue: "CFFEX", exchanges: ["CFFEX"], group: "China Index/ETF Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.SSE.510050", name: "SSE 50 ETF Options", venue: "SSE", exchanges: ["SSE"], group: "China Index/ETF Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.SSE.510300", name: "SSE 300 ETF Options", venue: "SSE", exchanges: ["SSE"], group: "China Index/ETF Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.SZSE.159919", name: "SZSE 300 ETF Options", venue: "SZSE", exchanges: ["SZSE"], group: "China Index/ETF Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.SHFE.au", name: "SHFE Gold Options", venue: "SHFE", exchanges: ["SHFE"], group: "China Commodity Options", connector: "akshare", supportStatus: "partial" },
+  { symbol: "CN.SHFE.ag", name: "SHFE Silver Options", venue: "SHFE", exchanges: ["SHFE"], group: "China Commodity Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.SHFE.cu", name: "SHFE Copper Options", venue: "SHFE", exchanges: ["SHFE"], group: "China Commodity Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.INE.sc", name: "INE Crude Oil Options", venue: "INE", exchanges: ["INE"], group: "China Commodity Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.DCE.i", name: "DCE Iron Ore Options", venue: "DCE", exchanges: ["DCE"], group: "China Commodity Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.DCE.m", name: "DCE Soymeal Options", venue: "DCE", exchanges: ["DCE"], group: "China Commodity Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.CZCE.SR", name: "CZCE Sugar Options", venue: "CZCE", exchanges: ["CZCE"], group: "China Commodity Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.CZCE.CF", name: "CZCE Cotton Options", venue: "CZCE", exchanges: ["CZCE"], group: "China Commodity Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "US.CBOE.SPX", name: "S&P 500 Index Options", venue: "CBOE", exchanges: ["CBOE"], group: "US Index/Futures Options", connector: null, supportStatus: "unsupported" },
+  { symbol: "US.CBOE.NDX", name: "Nasdaq-100 Index Options", venue: "CBOE", exchanges: ["CBOE"], group: "US Index/Futures Options", connector: null, supportStatus: "unsupported" },
+  { symbol: "US.CME.ES", name: "E-mini S&P 500 Futures Options", venue: "CME", exchanges: ["CME"], group: "US Index/Futures Options", connector: null, supportStatus: "unsupported" },
+  { symbol: "US.CME.NQ", name: "E-mini Nasdaq-100 Futures Options", venue: "CME", exchanges: ["CME"], group: "US Index/Futures Options", connector: null, supportStatus: "unsupported" },
+  { symbol: "US.CME.GC", name: "COMEX Gold Options", venue: "CME", exchanges: ["CME", "COMEX"], group: "US Index/Futures Options", connector: null, supportStatus: "unsupported" },
+  { symbol: "US.NYMEX.CL", name: "NYMEX WTI Crude Oil Options", venue: "NYMEX", exchanges: ["NYMEX", "CME"], group: "US Index/Futures Options", connector: null, supportStatus: "unsupported" },
+];
+
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
   "cache-control": "no-store",
@@ -496,30 +520,56 @@ async function getDuckDbTradFiSnapshot(symbol, source) {
 }
 
 async function getTradFiAvailableInstruments() {
+  const catalog = new Map(TRADFI_CATALOG.map((item) => [item.symbol, catalogInstrument(item)]));
   let repo;
   try {
     repo = await createDuckDbRepository({ dbPath: getDuckDbPath() });
     const available = await repo.getTradFiAvailableSymbols();
-    return available
-      .filter((row) => row.lastSnapshotAt)
-      .map((row) => ({
+    for (const row of available.filter((item) => item.lastSnapshotAt)) {
+      const base = catalog.get(row.symbol) ?? catalogInstrument({
         symbol: row.symbol,
         name: tradFiDisplayName(row.symbol),
         venue: tradFiVenue(row.symbol),
-        assetClass: "TradFi",
-        market: "tradfi",
+        exchanges: [tradFiVenue(row.symbol)],
         group: tradFiGroup(row.symbol),
-        spotPrice: null,
+        connector: "akshare",
+        supportStatus: "partial",
+      });
+      catalog.set(row.symbol, {
+        ...base,
         lastSnapshotAt: row.lastSnapshotAt,
         tickerCount: row.tickerCount,
         contractCount: row.contractCount,
-        status: row.status,
-      }));
+        dataStatus: Number(row.contractCount ?? row.tickerCount ?? 0) > 0 ? "available" : "needs_fields",
+        status: Number(row.contractCount ?? row.tickerCount ?? 0) > 0 ? "available" : row.status ?? "needs_fields",
+      });
+    }
+    return [...catalog.values()];
   } catch {
-    return [];
+    return [...catalog.values()];
   } finally {
     repo?.close();
   }
+}
+
+function catalogInstrument(item) {
+  return {
+    symbol: item.symbol,
+    name: item.name,
+    venue: item.venue,
+    exchanges: item.exchanges ?? [item.venue].filter(Boolean),
+    assetClass: "TradFi",
+    market: "tradfi",
+    group: item.group ?? tradFiGroup(item.symbol),
+    spotPrice: null,
+    lastSnapshotAt: null,
+    tickerCount: 0,
+    contractCount: 0,
+    connector: item.connector,
+    supportStatus: item.supportStatus,
+    dataStatus: item.supportStatus === "unsupported" ? "unsupported" : "needs_collector",
+    status: item.supportStatus === "unsupported" ? "unsupported" : "needs_collector",
+  };
 }
 
 async function resolveTradFiSymbol(repo, symbol) {

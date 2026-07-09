@@ -156,7 +156,13 @@ npm.cmd run collect:akshare -- --symbols=CN.CFFEX.IF,CN.SHFE.au --interval=60000
 npm.cmd run inspect:duckdb
 ```
 
-Supported first-pass symbols:
+The TradFi selector includes a broader catalog so the UI can expose intended coverage without pretending data is available:
+
+- China index / ETF options: `CN.CFFEX.IF`, `CN.CFFEX.IO`, `CN.CFFEX.MO`, `CN.CFFEX.HO`, `CN.SSE.510050`, `CN.SSE.510300`, `CN.SZSE.159919`.
+- China commodity options: `CN.SHFE.au`, `CN.SHFE.ag`, `CN.SHFE.cu`, `CN.INE.sc`, `CN.DCE.i`, `CN.DCE.m`, `CN.CZCE.SR`, `CN.CZCE.CF`.
+- US placeholders: `US.CBOE.SPX`, `US.CBOE.NDX`, `US.CME.ES`, `US.CME.NQ`, `US.CME.GC`, `US.NYMEX.CL`. These are marked `unsupported` until a stable option-chain source is validated.
+
+Current collector-backed first-pass symbols:
 
 - `CN.CFFEX.IF` / `CN.CFFEX.IO`: financial option board via `option_finance_board`.
 - `CN.SHFE.au`: commodity option table via `option_commodity_contract_table_sina`, plus contract-list diagnostics via `option_commodity_contract_sina`.

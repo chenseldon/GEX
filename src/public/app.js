@@ -72,6 +72,7 @@ const els = {
   marketClassTabs: document.querySelector("#marketClassTabs"),
   ctxMarketClassTabs: document.querySelector("#ctxModal .segmented.compact"),
   ctxAssetList: document.querySelector("#ctxAssetList"),
+  ctxExchangeList: document.querySelector("#ctxExchangeList"),
   ctxExpiryList: document.querySelector("#ctxExpiryList"),
   primaryNav: document.querySelector(".primary-nav"),
   symbolTabs: document.querySelector("#symbolTabs"),
@@ -449,18 +450,20 @@ async function switchMarketClass(marketClass) {
   if (!["crypto", "tradfi"].includes(marketClass)) return;
   state.marketClass = marketClass;
   const instruments = currentMarketInstruments();
+  if (instruments.length > 0 && !instruments.some((instrument) => instrument.symbol === state.symbol)) {
+    state.symbol = (instruments.find(instrumentHasGexData) ?? instruments[0]).symbol;
+    state.expiry = "";
+    activateLiveSnapshot();
+  }
   renderMarketTabs();
   renderSymbolTabs();
   renderContextPicker();
   if (instruments.length === 0) {
     return;
   }
-  if (!instruments.some((instrument) => instrument.symbol === state.symbol)) {
-    state.symbol = instruments[0].symbol;
-    state.expiry = "";
-    activateLiveSnapshot();
+  if (instrumentHasGexData(selectedInstrument())) {
+    await loadData();
   }
-  await loadData();
 }
 
 function instrumentMarket(instrument) {
@@ -471,6 +474,25 @@ function instrumentMarket(instrument) {
 
 function currentMarketInstruments() {
   return state.instruments.filter((instrument) => instrumentMarket(instrument) === state.marketClass);
+}
+
+function selectedInstrument() {
+  return state.instruments.find((instrument) => instrument.symbol === state.symbol) ?? null;
+}
+
+function instrumentHasGexData(instrument) {
+  if (!instrument) return false;
+  if (instrumentMarket(instrument) === "crypto") return true;
+  return instrument.dataStatus === "available"
+    || instrument.status === "available"
+    || Number(instrument.contractCount ?? instrument.tickerCount ?? 0) > 0;
+}
+
+function tradFiStatusText(instrument) {
+  if (instrumentHasGexData(instrument)) return "Live DuckDB";
+  if (instrument?.dataStatus === "unsupported" || instrument?.status === "unsupported") return "Unsupported";
+  if (instrument?.supportStatus === "planned") return "Connector planned";
+  return "Needs collector";
 }
 
 async function loadData() {
@@ -556,13 +578,18 @@ function renderSymbolTabs() {
       button.type = "button";
       button.textContent = instrument.symbol;
       button.className = instrument.symbol === state.symbol ? "active" : "";
-      button.title = instrument.name;
+      button.title = instrumentMarket(instrument) === "tradfi"
+        ? `${instrument.name} · ${tradFiStatusText(instrument)}`
+        : instrument.name;
       button.addEventListener("click", async () => {
         state.symbol = instrument.symbol;
         state.expiry = "";
         activateLiveSnapshot();
         renderSymbolTabs();
-        await loadData();
+        renderContextPicker();
+        if (instrumentHasGexData(instrument)) {
+          await loadData();
+        }
       });
       return button;
     }),
@@ -571,6 +598,7 @@ function renderSymbolTabs() {
 
 function renderContextPicker() {
   const instruments = currentMarketInstruments();
+  const current = selectedInstrument();
   els.ctxPillSymbol.textContent = state.symbol;
   els.ctxPillMeta.textContent = `${state.expiry ? formatExpiryCode(state.expiry) : "All"} · TOTAL`;
   if (instruments.length === 0) {
@@ -584,23 +612,63 @@ function renderContextPicker() {
       ...instruments.map((instrument) => {
         const button = document.createElement("button");
         button.type = "button";
-        button.innerHTML = `<span class="asset-logo">${assetIcon(instrument.symbol)}</span><strong>${instrument.symbol}</strong><small>${instrument.name}</small>`;
+        const status = instrumentMarket(instrument) === "tradfi" ? ` - ${tradFiStatusText(instrument)}` : "";
+        button.innerHTML = `<span class="asset-logo">${assetIcon(instrument.symbol)}</span><strong>${instrument.symbol}</strong><small>${instrument.name}${status}</small>`;
         button.className = instrument.symbol === state.symbol ? "active" : "";
         button.addEventListener("click", async () => {
           state.symbol = instrument.symbol;
           state.expiry = "";
           activateLiveSnapshot();
-          els.ctxModal.hidden = true;
-          await loadData();
+          renderSymbolTabs();
+          renderContextPicker();
+          if (instrumentHasGexData(instrument)) {
+            els.ctxModal.hidden = true;
+            await loadData();
+          }
         });
         return button;
       }),
     );
   }
-  els.ctxExpiryList.replaceChildren(
-    contextExpiryButton("", { label: "TOTAL", gex: state.dashboard.expiries.reduce((sum, row) => sum + Math.abs(row.gex), 0) }),
-    ...state.dashboard.expiries.map((row) => contextExpiryButton(row.expiry, row)),
+  renderContextExchangeList(current);
+  renderContextExpiryList(current);
+}
+
+function renderContextExchangeList(instrument) {
+  const market = instrumentMarket(instrument);
+  const exchanges = market === "tradfi"
+    ? (instrument?.exchanges?.length ? instrument.exchanges : [instrument?.venue ?? "TradFi"])
+    : ["Deribit", "Bybit", "OKX"];
+  els.ctxExchangeList.replaceChildren(
+    contextInfoButton("All venues", "", true),
+    ...exchanges.map((exchange) => contextInfoButton(exchange, market === "tradfi" ? instrument?.group ?? "" : "Crypto options")),
   );
+}
+
+function renderContextExpiryList(instrument) {
+  if (instrumentHasGexData(instrument)) {
+    els.ctxExpiryList.replaceChildren(
+      contextExpiryButton("", { label: "TOTAL", gex: state.dashboard.expiries.reduce((sum, row) => sum + Math.abs(row.gex), 0) }),
+      ...state.dashboard.expiries.map((row) => contextExpiryButton(row.expiry, row)),
+    );
+    return;
+  }
+
+  const message = instrument?.dataStatus === "unsupported" || instrument?.status === "unsupported"
+    ? "Connector required"
+    : "Run AKShare collector";
+  els.ctxExpiryList.replaceChildren(
+    contextInfoButton("No real expiries", message, true, true),
+  );
+}
+
+function contextInfoButton(labelText, detailText = "", active = false, disabled = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = active ? "active" : "";
+  button.disabled = disabled;
+  button.innerHTML = `<strong>${labelText}</strong>${detailText ? `<small>${detailText}</small>` : ""}`;
+  return button;
 }
 
 function renderExpirySelect() {

@@ -989,7 +989,46 @@ test("API auto source exposes TradFi instruments when AKShare DuckDB data exists
     assert.equal(response.status, 200);
     assert.equal(tradfi.group, "China Commodity Options");
     assert.equal(tradfi.market, "tradfi");
-    assert.equal(tradfi.status, "ok");
+    assert.equal(tradfi.status, "available");
+    assert.equal(tradfi.dataStatus, "available");
+    assert.deepEqual(tradfi.exchanges, ["SHFE"]);
+  } finally {
+    if (previousSource === undefined) delete process.env.DATA_SOURCE;
+    else process.env.DATA_SOURCE = previousSource;
+    if (previousDbPath === undefined) delete process.env.GEX_DB_PATH;
+    else process.env.GEX_DB_PATH = previousDbPath;
+    if (previousRealtime === undefined) delete process.env.DERIBIT_REALTIME;
+    else process.env.DERIBIT_REALTIME = previousRealtime;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("API auto source includes TradFi catalog entries before collectors populate data", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-api-tradfi-catalog-"));
+  const dbPath = join(dir, "gex.duckdb");
+  const previousSource = process.env.DATA_SOURCE;
+  const previousDbPath = process.env.GEX_DB_PATH;
+  const previousRealtime = process.env.DERIBIT_REALTIME;
+
+  try {
+    process.env.DATA_SOURCE = "auto";
+    process.env.DERIBIT_REALTIME = "0";
+    process.env.GEX_DB_PATH = dbPath;
+
+    const handler = createApiHandler();
+    const response = await handler(new Request("http://localhost/api/instruments"));
+    const payload = await response.json();
+    const bySymbol = new Map(payload.instruments.map((item) => [item.symbol, item]));
+
+    assert.equal(response.status, 200);
+    assert.equal(bySymbol.get("CN.CFFEX.IF").group, "China Index/ETF Options");
+    assert.deepEqual(bySymbol.get("CN.CFFEX.IF").exchanges, ["CFFEX"]);
+    assert.equal(bySymbol.get("CN.CFFEX.IF").dataStatus, "needs_collector");
+    assert.equal(bySymbol.get("CN.SHFE.au").group, "China Commodity Options");
+    assert.deepEqual(bySymbol.get("CN.SHFE.au").exchanges, ["SHFE"]);
+    assert.equal(bySymbol.get("US.CBOE.SPX").dataStatus, "unsupported");
+    assert.deepEqual(bySymbol.get("US.CME.GC").exchanges, ["CME", "COMEX"]);
+    assert.deepEqual(bySymbol.get("US.NYMEX.CL").exchanges, ["NYMEX", "CME"]);
   } finally {
     if (previousSource === undefined) delete process.env.DATA_SOURCE;
     else process.env.DATA_SOURCE = previousSource;
