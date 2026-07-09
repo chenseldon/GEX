@@ -44,8 +44,8 @@
       <main class="workspace">
         <section class="context-bar" aria-label="Market context">
           <div class="segmented" id="marketClassTabs">
-            <button class="active" type="button">Crypto</button>
-            <button type="button" disabled>TradFi</button>
+            <button class="active" type="button" data-market-class="crypto">Crypto</button>
+            <button type="button" data-market-class="tradfi">TradFi</button>
           </div>
           <div class="symbol-tabs" id="symbolTabs" aria-label="Instrument selector"></div>
           <label>
@@ -305,8 +305,8 @@
             <div class="ctx-title-row">
               <strong>Context</strong>
               <div class="segmented compact">
-                <button class="active" type="button">Crypto</button>
-                <button type="button" disabled>TradFi</button>
+                <button class="active" type="button" data-market-class="crypto">Crypto</button>
+                <button type="button" data-market-class="tradfi">TradFi</button>
               </div>
               <span>Settles 08:00 UTC</span>
             </div>
