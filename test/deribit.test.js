@@ -897,6 +897,139 @@ test("API default source prefers DuckDB latest Deribit snapshot", async () => {
   }
 });
 
+test("API auto source exposes TradFi instruments when AKShare DuckDB data exists", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-api-tradfi-instruments-"));
+  const dbPath = join(dir, "gex.duckdb");
+  const previousSource = process.env.DATA_SOURCE;
+  const previousDbPath = process.env.GEX_DB_PATH;
+  const previousRealtime = process.env.DERIBIT_REALTIME;
+
+  try {
+    process.env.DATA_SOURCE = "auto";
+    process.env.DERIBIT_REALTIME = "0";
+    process.env.GEX_DB_PATH = dbPath;
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    await repo.insertTradFiSnapshot({
+      sourceName: "akshare",
+      observedAt,
+      requestedSymbols: ["CN.SHFE.au"],
+      status: "ok",
+      snapshots: [
+        {
+          symbol: "CN.SHFE.au",
+          status: "ok",
+          underlyingPrice: 620,
+          contracts: [tradFiContractForSymbol("CN.SHFE.au", "au2607C600", "call", 600)],
+        },
+      ],
+      warnings: [],
+    });
+    await repo.close();
+
+    const handler = createApiHandler();
+    const response = await handler(new Request("http://localhost/api/instruments"));
+    const payload = await response.json();
+    const tradfi = payload.instruments.find((item) => item.symbol === "CN.SHFE.au");
+
+    assert.equal(response.status, 200);
+    assert.equal(tradfi.group, "China Commodity Options");
+    assert.equal(tradfi.market, "tradfi");
+    assert.equal(tradfi.status, "ok");
+  } finally {
+    if (previousSource === undefined) delete process.env.DATA_SOURCE;
+    else process.env.DATA_SOURCE = previousSource;
+    if (previousDbPath === undefined) delete process.env.GEX_DB_PATH;
+    else process.env.GEX_DB_PATH = previousDbPath;
+    if (previousRealtime === undefined) delete process.env.DERIBIT_REALTIME;
+    else process.env.DERIBIT_REALTIME = previousRealtime;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("API akshare source serves TradFi Studio from DuckDB without fake history", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-api-tradfi-studio-"));
+  const dbPath = join(dir, "gex.duckdb");
+  const previousSource = process.env.DATA_SOURCE;
+  const previousDbPath = process.env.GEX_DB_PATH;
+
+  try {
+    process.env.DATA_SOURCE = "akshare";
+    process.env.GEX_DB_PATH = dbPath;
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    await repo.insertTradFiSnapshot({
+      sourceName: "akshare",
+      observedAt,
+      requestedSymbols: ["CN.SHFE.au"],
+      status: "ok",
+      snapshots: [
+        {
+          symbol: "CN.SHFE.au",
+          status: "ok",
+          underlyingPrice: 620,
+          contracts: [
+            tradFiContractForSymbol("CN.SHFE.au", "au2607C600", "call", 600),
+            tradFiContractForSymbol("CN.SHFE.au", "au2607P600", "put", 600),
+            tradFiContractForSymbol("CN.SHFE.au", "au2607C640", "call", 640),
+          ],
+        },
+      ],
+      warnings: [],
+    });
+    await repo.close();
+
+    const handler = createApiHandler();
+    const studioResponse = await handler(new Request("http://localhost/api/gex/studio?symbol=CN.SHFE.au"));
+    const studio = await studioResponse.json();
+    const heatmapResponse = await handler(new Request("http://localhost/api/gex/heatmap?symbol=CN.SHFE.au&type=net"));
+    const heatmap = await heatmapResponse.json();
+
+    assert.equal(studioResponse.status, 200);
+    assert.equal(studio.symbol, "CN.SHFE.au");
+    assert.equal(studio.sourceLabel, "AKShare");
+    assert.equal(studio.spotPrice, 620);
+    assert.equal(studio.rows.length > 0, true);
+    assert.equal(heatmapResponse.status, 200);
+    assert.equal(heatmap.status, "accumulating");
+    assert.equal(heatmap.rows.length, 0);
+    assert.match(heatmap.warning, /AKShare snapshots/);
+  } finally {
+    if (previousSource === undefined) delete process.env.DATA_SOURCE;
+    else process.env.DATA_SOURCE = previousSource;
+    if (previousDbPath === undefined) delete process.env.GEX_DB_PATH;
+    else process.env.GEX_DB_PATH = previousDbPath;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("API akshare source returns structured unavailable for unsupported TradFi symbol", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-api-tradfi-unsupported-"));
+  const dbPath = join(dir, "gex.duckdb");
+  const previousSource = process.env.DATA_SOURCE;
+  const previousDbPath = process.env.GEX_DB_PATH;
+
+  try {
+    process.env.DATA_SOURCE = "akshare";
+    process.env.GEX_DB_PATH = dbPath;
+    await initializeDuckDb({ dbPath });
+
+    const handler = createApiHandler();
+    const response = await handler(new Request("http://localhost/api/gex/studio?symbol=US.CME.ES"));
+    const payload = await response.json();
+
+    assert.equal(response.status, 400);
+    assert.equal(payload.status, "unavailable");
+    assert.match(payload.error, /AKShare data unavailable/);
+  } finally {
+    if (previousSource === undefined) delete process.env.DATA_SOURCE;
+    else process.env.DATA_SOURCE = previousSource;
+    if (previousDbPath === undefined) delete process.env.GEX_DB_PATH;
+    else process.env.GEX_DB_PATH = previousDbPath;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("live Deribit snapshot uses book summary payload without DuckDB writes", async () => {
   const client = {
     async getBookSummaryByCurrency(symbol, kind) {
@@ -1016,5 +1149,22 @@ function tradFiContract(instrumentName, optionType, strike) {
     riskFreeRate: 0.02,
     volume: 5,
     markPrice: 120,
+  };
+}
+
+function tradFiContractForSymbol(symbol, instrumentName, optionType, strike) {
+  const contract = tradFiContract(instrumentName, optionType, strike);
+  const [, venue, underlying] = symbol.split(".");
+  return {
+    ...contract,
+    symbol,
+    venue,
+    underlying,
+    instrumentName,
+    strike,
+    optionType,
+    underlyingPrice: 620,
+    contractMultiplier: 1000,
+    markPrice: 12,
   };
 }

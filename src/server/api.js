@@ -41,6 +41,14 @@ export function createApiHandler() {
 
   async function getSnapshot(symbol) {
     const source = process.env.DATA_SOURCE ?? "auto";
+    if (isTradFiSymbol(symbol)) {
+      return getDuckDbTradFiSnapshot(symbol, source);
+    }
+
+    if (source === "akshare") {
+      throw new Error(`AKShare data unavailable for symbol: ${symbol}`);
+    }
+
     if (source === "duckdb") {
       const duckdb = await getDuckDbDeribitSnapshot(symbol);
       if (duckdb) {
@@ -221,6 +229,14 @@ export function createApiHandler() {
 
       if (url.pathname === "/api/data-health") {
         const deribit = await getDeribitHealth();
+        const akshare = deribit.akshare ?? {
+          status: "empty",
+          lastRunAt: null,
+          sourceRuns: 0,
+          contracts: 0,
+          skippedContracts: 0,
+          warnings: [],
+        };
         return json({
           sources: [
             {
@@ -231,6 +247,22 @@ export function createApiHandler() {
               limitation: "Static fixture for model and UI validation; replace with live collector in V1.",
             },
             deribit,
+            {
+              name: "akshare-duckdb",
+              status: akshare.status,
+              lastSnapshotAt: akshare.lastRunAt,
+              sourceRuns: akshare.sourceRuns,
+              rawSnapshots: akshare.rawSnapshots,
+              contracts: akshare.contracts,
+              skippedContracts: akshare.skippedContracts,
+              missingIv: akshare.missingIv,
+              missingGamma: akshare.missingGamma,
+              missingOi: akshare.missingOi,
+              missingMultiplier: akshare.missingMultiplier,
+              missingExpiry: akshare.missingExpiry,
+              missingUnderlyingPrice: akshare.missingUnderlyingPrice,
+              warnings: akshare.warnings,
+            },
           ],
           coverage: {
             symbols: instruments.length,
@@ -242,23 +274,43 @@ export function createApiHandler() {
 
       return json({ error: "Not found" }, 404);
     } catch (error) {
-      const status = /Unsupported symbol|symbol is required|type must be|coverage must be|Deribit data unavailable|DuckDB data unavailable/.test(error.message)
+      const status = /Unsupported symbol|symbol is required|type must be|coverage must be|Deribit data unavailable|DuckDB data unavailable|AKShare data unavailable/.test(error.message)
         ? 400
         : 500;
-      return json({ error: error.message }, status);
+      return json(
+        {
+          error: error.message,
+          status: /data unavailable/.test(error.message) ? "unavailable" : undefined,
+        },
+        status,
+      );
     }
   };
 }
 
 function requiredSymbol(url) {
-  const symbol = url.searchParams.get("symbol")?.toUpperCase();
-  if (!symbol) {
+  const raw = url.searchParams.get("symbol")?.trim();
+  if (!raw) {
     throw new Error("symbol is required");
   }
-  if (!optionChains[symbol]) {
-    throw new Error(`Unsupported symbol: ${symbol}`);
+  const cryptoSymbol = raw.toUpperCase();
+  if (optionChains[cryptoSymbol]) {
+    return cryptoSymbol;
   }
-  return symbol;
+  if (isTradFiSymbol(raw)) {
+    return canonicalTradFiSymbol(raw);
+  }
+  throw new Error(`Unsupported symbol: ${raw}`);
+}
+
+function isTradFiSymbol(symbol) {
+  return /^[A-Za-z]{2}\.[A-Za-z0-9]+\.[A-Za-z0-9_.-]+$/.test(String(symbol ?? ""));
+}
+
+function canonicalTradFiSymbol(symbol) {
+  const parts = String(symbol).trim().split(".");
+  if (parts.length < 3) return String(symbol).trim();
+  return `${parts[0].toUpperCase()}.${parts[1].toUpperCase()}.${parts.slice(2).join(".")}`;
 }
 
 function json(payload, status = 200) {
@@ -331,12 +383,24 @@ async function getInstrumentList() {
     return instruments;
   }
 
-  const deribit = await getDeribitAvailableInstruments();
-  if (deribit.length > 0 || source === "deribit") {
-    return deribit;
+  const includeCrypto = source !== "akshare";
+  const includeTradFi = ["auto", "duckdb", "akshare"].includes(source);
+  const lists = [];
+
+  if (includeCrypto) {
+    const deribit = await getDeribitAvailableInstruments();
+    if (deribit.length > 0 || source === "deribit") {
+      lists.push(...deribit);
+    } else {
+      lists.push(...instruments);
+    }
   }
 
-  return instruments;
+  if (includeTradFi) {
+    lists.push(...await getTradFiAvailableInstruments());
+  }
+
+  return lists;
 }
 
 async function getDeribitAvailableInstruments() {
@@ -401,6 +465,95 @@ async function getDuckDbDeribitSnapshot(symbol) {
   }
 }
 
+async function getDuckDbTradFiSnapshot(symbol, source) {
+  if (!["auto", "duckdb", "akshare"].includes(source)) {
+    throw new Error(`AKShare data unavailable for symbol: ${symbol}`);
+  }
+
+  let repo;
+  try {
+    repo = await createDuckDbRepository({ dbPath: getDuckDbPath() });
+    const resolvedSymbol = await resolveTradFiSymbol(repo, symbol);
+    const latest = resolvedSymbol ? await repo.getLatestTradFiOptionChain(resolvedSymbol) : null;
+    if (!latest || latest.contracts.length === 0) {
+      throw new Error(`AKShare data unavailable for symbol: ${symbol}`);
+    }
+    const snapshot = calculateGexSnapshot(latest);
+    return {
+      ...snapshot,
+      sourceLabel: "AKShare",
+      sourceName: "akshare-duckdb",
+      historySnapshots: [],
+    };
+  } catch (error) {
+    if (/AKShare data unavailable/.test(error.message)) {
+      throw error;
+    }
+    throw new Error(`AKShare data unavailable for symbol: ${symbol}`);
+  } finally {
+    repo?.close();
+  }
+}
+
+async function getTradFiAvailableInstruments() {
+  let repo;
+  try {
+    repo = await createDuckDbRepository({ dbPath: getDuckDbPath() });
+    const available = await repo.getTradFiAvailableSymbols();
+    return available
+      .filter((row) => row.lastSnapshotAt)
+      .map((row) => ({
+        symbol: row.symbol,
+        name: tradFiDisplayName(row.symbol),
+        venue: tradFiVenue(row.symbol),
+        assetClass: "TradFi",
+        market: "tradfi",
+        group: tradFiGroup(row.symbol),
+        spotPrice: null,
+        lastSnapshotAt: row.lastSnapshotAt,
+        tickerCount: row.tickerCount,
+        contractCount: row.contractCount,
+        status: row.status,
+      }));
+  } catch {
+    return [];
+  } finally {
+    repo?.close();
+  }
+}
+
+async function resolveTradFiSymbol(repo, symbol) {
+  const available = await repo.getTradFiAvailableSymbols();
+  const exact = available.find((row) => row.symbol === symbol);
+  if (exact) return exact.symbol;
+  const lower = String(symbol).toLowerCase();
+  return available.find((row) => String(row.symbol).toLowerCase() === lower)?.symbol ?? symbol;
+}
+
+function tradFiVenue(symbol) {
+  return String(symbol).split(".")[1] ?? "TradFi";
+}
+
+function tradFiDisplayName(symbol) {
+  const [region, venue, underlying] = String(symbol).split(".");
+  if (!region || !venue || !underlying) return String(symbol);
+  return `${underlying.toUpperCase()} ${venue} Options`;
+}
+
+function tradFiGroup(symbol) {
+  const venue = tradFiVenue(symbol).toUpperCase();
+  if (["CFFEX", "SSE", "SZSE"].includes(venue)) {
+    return "China Index/ETF Options";
+  }
+  if (["SHFE", "DCE", "CZCE", "INE", "GFEX"].includes(venue)) {
+    return "China Commodity Options";
+  }
+  if (String(symbol).toUpperCase().startsWith("US.")) {
+    return "US Index/Futures Options";
+  }
+  return "TradFi Options";
+}
+
 function safeSnapshot(input) {
   try {
     return calculateGexSnapshot(input);
@@ -410,7 +563,7 @@ function safeSnapshot(input) {
 }
 
 function buildRealTrendSeries(snapshot, { hours = 24 } = {}) {
-  if (!isDeribitMarketSnapshot(snapshot)) {
+  if (!isRealMarketSnapshot(snapshot)) {
     return buildTrendSeries(snapshot);
   }
 
@@ -420,9 +573,9 @@ function buildRealTrendSeries(snapshot, { hours = 24 } = {}) {
   return {
     symbol: snapshot.symbol,
     asOf: snapshot.asOf,
-    source: "deribit-duckdb",
+    source: snapshot.sourceName,
     status: realPoints.length >= 2 ? "ready" : "accumulating",
-    warning: realPoints.length >= 2 ? null : "Not enough historical Deribit snapshots yet. Keep the collector running to build this view.",
+    warning: realPoints.length >= 2 ? null : notEnoughHistoryWarning(snapshot, "view"),
     points: realPoints,
   };
 }
@@ -446,7 +599,7 @@ function buildRealHeatmapMatrix(snapshot, { type = "net", window = "24h" } = {})
   if (!["net", "abs"].includes(type)) {
     throw new Error("type must be net or abs");
   }
-  if (!isDeribitMarketSnapshot(snapshot)) {
+  if (!isRealMarketSnapshot(snapshot)) {
     return buildHeatmapMatrix(snapshot, { type });
   }
 
@@ -455,9 +608,9 @@ function buildRealHeatmapMatrix(snapshot, { type = "net", window = "24h" } = {})
     return {
       symbol: snapshot.symbol,
       type,
-      source: "deribit-duckdb",
+      source: snapshot.sourceName,
       status: "accumulating",
-      warning: "Not enough historical Deribit snapshots yet. Keep the collector running to build this heatmap.",
+      warning: notEnoughHistoryWarning(snapshot, "heatmap"),
       columns: [],
       rows: [],
       indexPath: [],
@@ -483,7 +636,7 @@ function buildRealHeatmapMatrix(snapshot, { type = "net", window = "24h" } = {})
   return {
     symbol: snapshot.symbol,
     type,
-    source: "deribit-duckdb",
+    source: snapshot.sourceName,
     status: "ready",
     warning: null,
     columns,
@@ -494,7 +647,7 @@ function buildRealHeatmapMatrix(snapshot, { type = "net", window = "24h" } = {})
 }
 
 function buildRealChangeTable(snapshot, { coverage = 50 } = {}) {
-  if (!isDeribitMarketSnapshot(snapshot)) {
+  if (!isRealMarketSnapshot(snapshot)) {
     return buildChangeTable(snapshot, { coverage });
   }
   const allowed = [50, 80, 90, 100];
@@ -514,9 +667,9 @@ function buildRealChangeTable(snapshot, { coverage = 50 } = {}) {
     return {
       symbol: snapshot.symbol,
       coverage: normalizedCoverage,
-      source: "deribit-duckdb",
+      source: snapshot.sourceName,
       status: "accumulating",
-      warning: "Not enough historical Deribit snapshots yet. Change percentages will appear after another collection point.",
+      warning: notEnoughHistoryWarning(snapshot, "change table"),
       columns: selected.map((row) => row.strike),
       periods: ["Now"],
       rows: selected.map((row) => ({ strike: row.strike, now: Math.abs(row.gex), changes: {} })),
@@ -527,7 +680,7 @@ function buildRealChangeTable(snapshot, { coverage = 50 } = {}) {
   return {
     symbol: snapshot.symbol,
     coverage: normalizedCoverage,
-    source: "deribit-duckdb",
+    source: snapshot.sourceName,
     status: "ready",
     warning: null,
     columns: selected.map((row) => row.strike),
@@ -552,14 +705,19 @@ function historyForWindow(snapshot, hours) {
   const filtered = history
     .filter((item) => new Date(item.asOf).getTime() >= cutoff)
     .sort((a, b) => new Date(a.asOf) - new Date(b.asOf));
-  if (filtered.length === 0 && isDeribitMarketSnapshot(snapshot)) {
+  if (filtered.length === 0 && isRealMarketSnapshot(snapshot)) {
     return [snapshot];
   }
   return filtered;
 }
 
-function isDeribitMarketSnapshot(snapshot) {
-  return snapshot.sourceName === "deribit-duckdb" || snapshot.sourceName === "deribit-live";
+function isRealMarketSnapshot(snapshot) {
+  return ["deribit-duckdb", "deribit-live", "akshare-duckdb"].includes(snapshot.sourceName);
+}
+
+function notEnoughHistoryWarning(snapshot, view) {
+  const label = snapshot.sourceName === "akshare-duckdb" ? "AKShare" : "Deribit";
+  return `Not enough ${label} snapshots yet. Keep the collector running to build this ${view}.`;
 }
 
 function windowHours(window) {
