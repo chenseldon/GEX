@@ -181,6 +181,8 @@ export async function createDuckDbRepository({ dbPath = getDuckDbPath() } = {}) 
         }
 
         const contracts = tradFiContractsFromSnapshot(snapshot);
+        addTradFiNormalizationWarnings(skipped, snapshot?.normalized?.warnings);
+        addTradFiSkippedRowReasons(skipped, snapshot?.normalized?.skippedRows);
         for (const contract of contracts) {
           const validation = validateTradFiContract(contract);
           if (!validation.ok) {
@@ -822,6 +824,28 @@ function tradFiContractsFromSnapshot(snapshot) {
     return snapshot.normalized.contracts;
   }
   return [];
+}
+
+function addTradFiNormalizationWarnings(target, warnings) {
+  if (!warnings || typeof warnings !== "object") {
+    return;
+  }
+  target.contracts += Number(warnings.skippedContracts ?? 0);
+  target.missingIv += Number(warnings.missingIv ?? 0);
+  target.missingOi += Number(warnings.missingOi ?? 0);
+  target.missingMultiplier += Number(warnings.missingMultiplier ?? 0);
+  target.missingUnderlyingPrice += Number(warnings.missingUnderlyingPrice ?? 0);
+}
+
+function addTradFiSkippedRowReasons(target, skippedRows) {
+  if (!Array.isArray(skippedRows)) {
+    return;
+  }
+  for (const row of skippedRows) {
+    const reason = String(row?.reason ?? "");
+    if (/gamma/i.test(reason)) target.missingGamma += 1;
+    if (/expiry/i.test(reason)) target.missingExpiry += 1;
+  }
 }
 
 function validateTradFiContract(contract) {

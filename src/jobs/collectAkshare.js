@@ -2,21 +2,39 @@ import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { buildTradFiSnapshotFromAkshareReport } from "../data/akshareCollector.js";
+import { createDuckDbRepository } from "../data/duckdbRepository.js";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const collectorPath = resolve(__dirname, "../../scripts/akshare_collect.py");
 const pythonBin = process.env.PYTHON_BIN ?? "python";
-const forwardedArgs = process.argv.slice(2);
+const forwardedArgs = withCompactJson(process.argv.slice(2));
 const timeoutMs = parseTimeoutMs(
   process.env.AKSHARE_COLLECT_TIMEOUT_MS,
   defaultTimeoutMs(forwardedArgs),
 );
 
-const child = spawn(pythonBin, [collectorPath, ...forwardedArgs], {
-  stdio: "inherit",
-  windowsHide: true,
-});
+const repoPromise = createDuckDbRepository();
+let insertQueue = Promise.resolve();
+let stdoutBuffer = "";
 let timedOut = false;
 let forwardedSignal = null;
+let reportCount = 0;
+
+const child = spawn(pythonBin, [collectorPath, ...forwardedArgs], {
+  stdio: ["ignore", "pipe", "inherit"],
+  windowsHide: true,
+});
+
+child.stdout.setEncoding("utf8");
+child.stdout.on("data", (chunk) => {
+  stdoutBuffer += chunk;
+  const lines = stdoutBuffer.split(/\r?\n/);
+  stdoutBuffer = lines.pop() ?? "";
+  for (const line of lines) {
+    handleReportLine(line);
+  }
+});
 
 const timeout = timeoutMs
   ? setTimeout(() => {
@@ -33,9 +51,22 @@ child.on("error", (error) => {
   process.exitCode = 1;
 });
 
-child.on("close", (code, signal) => {
+child.on("close", async (code, signal) => {
   clearCollectorTimeout(timeout);
   removeSignalHandlers();
+  if (stdoutBuffer.trim()) {
+    handleReportLine(stdoutBuffer);
+    stdoutBuffer = "";
+  }
+  try {
+    await insertQueue;
+    const repo = await repoPromise;
+    repo.close();
+  } catch (error) {
+    console.error(`Failed to persist AKShare snapshot: ${error.message}`);
+    process.exitCode = 1;
+    return;
+  }
   if (timedOut) {
     process.exitCode = 1;
     return;
@@ -51,6 +82,36 @@ child.on("close", (code, signal) => {
   console.error(`AKShare collector exited from signal: ${signal}`);
   process.exitCode = 1;
 });
+
+process.on("exit", () => {
+  if (!child.killed) {
+    child.kill();
+  }
+});
+
+function handleReportLine(line) {
+  const text = String(line ?? "").trim();
+  if (!text) return;
+  process.stdout.write(`${text}\n`);
+  let report;
+  try {
+    report = JSON.parse(text);
+  } catch (error) {
+    console.error(`Ignoring non-JSON AKShare output: ${error.message}`);
+    return;
+  }
+  reportCount += 1;
+  const reportNumber = reportCount;
+  insertQueue = insertQueue.then(async () => {
+    const repo = await repoPromise;
+    await repo.insertTradFiSnapshot(buildTradFiSnapshotFromAkshareReport(report));
+    console.error(`Persisted AKShare report ${reportNumber} to DuckDB`);
+  });
+}
+
+function withCompactJson(args) {
+  return args.includes("--json") ? args : [...args, "--json"];
+}
 
 function parseTimeoutMs(value, fallback) {
   if (value === undefined) {
@@ -103,12 +164,6 @@ const signalHandlers = new Map(
 for (const [signal, handler] of signalHandlers) {
   process.on(signal, handler);
 }
-
-process.on("exit", () => {
-  if (!child.killed) {
-    child.kill();
-  }
-});
 
 function forwardShutdown(signal) {
   if (!forwardedSignal) {

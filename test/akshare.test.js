@@ -7,6 +7,7 @@ import {
   normalizeAkshareFinancialOptions,
   parseAkshareInstrumentName,
 } from "../src/integrations/akshareNormalize.js";
+import { buildTradFiSnapshotFromAkshareReport } from "../src/data/akshareCollector.js";
 
 const AS_OF = "2026-07-08T01:00:00.000Z";
 const STRIKE = "\u884c\u6743\u4ef7";
@@ -195,6 +196,77 @@ test("metadata IV path produces contracts accepted by GEX snapshot", () => {
   assert.equal(snapshot.symbol, "CN.SHFE.au");
   assert.equal(snapshot.byStrike.length, 1);
   assert.equal(Number.isFinite(snapshot.netGex), true);
+});
+
+test("AKShare collector report normalizes raw rows into TradFi snapshot payload", () => {
+  const payload = buildTradFiSnapshotFromAkshareReport({
+    sourceName: "akshare",
+    observedAt: AS_OF,
+    requestedSymbols: ["CN.SHFE.au"],
+    status: "ok",
+    snapshots: [
+      {
+        symbol: "CN.SHFE.au",
+        venue: "SHFE",
+        region: "CN",
+        underlying: "au",
+        assetClass: "commodity_option",
+        status: "ok",
+        rowCount: 1,
+        metadataPlaceholders: {
+          expiry: "2026-08-25",
+          impliedVolatility: 0.18,
+          contractMultiplier: 1000,
+          underlyingPrice: 998,
+        },
+        rawRows: [
+          {
+            interface: "option_commodity_contract_table_sina",
+            role: "option_table",
+            rows: [
+              {
+                [STRIKE]: 1000,
+                [CALL_NAME]: "au2608C1000",
+                [CALL_OI]: 310,
+                [PUT_NAME]: "au2608P1000",
+                [PUT_OI]: 280,
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(payload.sourceName, "akshare");
+  assert.equal(payload.snapshots[0].normalized.contracts.length, 2);
+  assert.equal(payload.snapshots[0].normalized.contracts[0].symbol, "CN.SHFE.au");
+  assert.equal(payload.snapshots[0].normalized.contracts[0].model, "black76");
+  assert.equal(payload.snapshots[0].normalized.warnings.skippedContracts, 0);
+});
+
+test("AKShare dry-run plans are preserved as TradFi source snapshots", () => {
+  const payload = buildTradFiSnapshotFromAkshareReport({
+    sourceName: "akshare",
+    observedAt: AS_OF,
+    requestedSymbols: ["CN.CFFEX.IF"],
+    status: "ok",
+    plans: [
+      {
+        symbol: "CN.CFFEX.IF",
+        venue: "CFFEX",
+        region: "CN",
+        underlying: "IF",
+        assetClass: "index_option",
+        status: "planned",
+        interfaces: [{ name: "option_finance_board", role: "option_board" }],
+      },
+    ],
+  });
+
+  assert.equal(payload.snapshots.length, 1);
+  assert.equal(payload.snapshots[0].symbol, "CN.CFFEX.IF");
+  assert.equal(payload.snapshots[0].normalized.contracts.length, 0);
 });
 
 test("AKShare instrument parser requires explicit expiry for precise GEX inputs", () => {

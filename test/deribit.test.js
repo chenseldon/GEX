@@ -514,6 +514,60 @@ test("DuckDB repository skips incomplete TradFi contracts with health counters",
   }
 });
 
+test("DuckDB repository counts AKShare normalization skips in data health", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-duckdb-tradfi-normalized-skip-"));
+  const dbPath = join(dir, "gex.duckdb");
+
+  try {
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    await repo.insertTradFiSnapshot({
+      sourceName: "akshare",
+      observedAt,
+      requestedSymbols: ["CN.SHFE.au"],
+      status: "partial",
+      snapshots: [
+        {
+          symbol: "CN.SHFE.au",
+          venue: "SHFE",
+          region: "CN",
+          status: "partial",
+          normalized: {
+            contracts: [],
+            skippedRows: [
+              {
+                instrumentName: "au2608C1000",
+                reason: "missing implied volatility or gamma; missing expiry",
+              },
+            ],
+            warnings: {
+              missingIv: 1,
+              missingOi: 0,
+              missingMultiplier: 1,
+              missingUnderlyingPrice: 1,
+              skippedContracts: 1,
+            },
+          },
+        },
+      ],
+      warnings: [],
+    });
+
+    const health = await repo.getHealth();
+
+    assert.equal(health.akshare.contracts, 0);
+    assert.equal(health.akshare.skippedContracts, 1);
+    assert.equal(health.akshare.missingIv, 1);
+    assert.equal(health.akshare.missingGamma, 1);
+    assert.equal(health.akshare.missingMultiplier, 1);
+    assert.equal(health.akshare.missingUnderlyingPrice, 1);
+    assert.equal(health.akshare.missingExpiry, 1);
+    await repo.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("DuckDB repository does not serve stale TradFi chain after later raw-only snapshot", async () => {
   const dir = await mkdtemp(join(tmpdir(), "gex-duckdb-tradfi-stale-"));
   const dbPath = join(dir, "gex.duckdb");
