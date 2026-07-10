@@ -12,6 +12,38 @@ const FINANCIAL_ALIASES = {
   askSize: ["samount", "askSize", "\u5356\u91cf", "\u5356\u51fa\u91cf"],
 };
 
+const GREEKS_ALIASES = {
+  instrumentName: [
+    "instrument",
+    "instrumentName",
+    "contractCode",
+    "code",
+    "\u4ee3\u7801",
+    "\u8bc1\u5238\u4ee3\u7801",
+    "\u671f\u6743\u4ee3\u7801",
+    "\u5408\u7ea6\u4ee3\u7801",
+    "\u5408\u7ea6\u7f16\u7801",
+    "\u5408\u7ea6\u4ea4\u6613\u4ee3\u7801",
+  ],
+  openInterest: ["position", "openInterest", "\u6301\u4ed3\u91cf", "\u6301\u4ed3"],
+  volume: ["volume", "\u6210\u4ea4\u91cf"],
+  markPrice: ["lastprice", "lastPrice", "\u6700\u65b0\u4ef7", "\u73b0\u4ef7"],
+  strike: ["strike", "\u884c\u6743\u4ef7", "\u6267\u884c\u4ef7"],
+  optionType: ["optionType", "type", "\u8ba4\u8d2d\u8ba4\u6cbd", "\u671f\u6743\u7c7b\u578b"],
+  impliedVolatility: [
+    "impliedVolatility",
+    "markIv",
+    "iv",
+    "IV",
+    "\u9690\u542b\u6ce2\u52a8\u7387",
+    "\u9690\u6ce2",
+  ],
+  delta: ["delta", "Delta", "\u5fb7\u5c14\u5854", "\u0394"],
+  gamma: ["gamma", "Gamma", "\u4f3d\u9a6c", "\u03b3"],
+  vega: ["vega", "Vega"],
+  theta: ["theta", "Theta"],
+};
+
 const COMMODITY_ALIASES = {
   strike: ["strike", "\u884c\u6743\u4ef7", "\u6267\u884c\u4ef7"],
   callInstrumentName: [
@@ -56,6 +88,10 @@ const COMMODITY_ALIASES = {
 
 export function normalizeAkshareFinancialOptions(rows, metadata = {}) {
   return normalizeRows(rows, metadata, normalizeFinancialRow);
+}
+
+export function normalizeAkshareGreeksRows(rows, metadata = {}) {
+  return normalizeRows(rows, metadata, normalizeGreeksRow);
 }
 
 export function normalizeAkshareCommodityOptionTable(rows, metadata = {}) {
@@ -142,6 +178,52 @@ function normalizeFinancialRow(row, metadata) {
       bidSize: numberValue(pick(row, FINANCIAL_ALIASES.bidSize)),
       askPrice: numberValue(pick(row, FINANCIAL_ALIASES.askPrice)),
       askSize: numberValue(pick(row, FINANCIAL_ALIASES.askSize)),
+    },
+  ];
+}
+
+function normalizeGreeksRow(row, metadata) {
+  const instrumentName = textValue(pick(row, GREEKS_ALIASES.instrumentName));
+  if (!instrumentName) {
+    return [skipCandidate(row, "missing instrument")];
+  }
+
+  const parsed = parseAkshareInstrumentName(instrumentName, {
+    expiry: resolveOverride(metadata, "expiry", { row, instrumentName }),
+  });
+  const strike = numberValue(pick(row, GREEKS_ALIASES.strike)) ?? parsed?.strike;
+  const optionType = normalizeOptionType(
+    pick(row, GREEKS_ALIASES.optionType) ?? parsed?.optionType,
+    instrumentName,
+  );
+  const underlying =
+    resolveOverride(metadata, "underlying", { row, instrumentName, parsed }) ??
+    parsed?.underlying;
+
+  return [
+    {
+      raw: row,
+      symbol: resolveSymbol(metadata, parsed ?? { underlying }),
+      venue:
+        resolveOverride(metadata, "venue", { row, instrumentName, parsed }) ?? "UNKNOWN",
+      region:
+        resolveOverride(metadata, "region", { row, instrumentName, parsed }) ?? "CN",
+      underlying,
+      instrumentName,
+      expiry: parsed?.expiry ?? resolveOverride(metadata, "expiry", { row, instrumentName, parsed }),
+      strike,
+      optionType,
+      openInterest: numberValue(pick(row, GREEKS_ALIASES.openInterest)),
+      volume: numberValue(pick(row, GREEKS_ALIASES.volume)),
+      markPrice: numberValue(pick(row, GREEKS_ALIASES.markPrice)),
+      impliedVolatility: numberValue(pick(row, GREEKS_ALIASES.impliedVolatility)),
+      gamma: numberValue(pick(row, GREEKS_ALIASES.gamma)),
+      greeks: compactGreeks({
+        delta: numberValue(pick(row, GREEKS_ALIASES.delta)),
+        gamma: numberValue(pick(row, GREEKS_ALIASES.gamma)),
+        vega: numberValue(pick(row, GREEKS_ALIASES.vega)),
+        theta: numberValue(pick(row, GREEKS_ALIASES.theta)),
+      }),
     },
   ];
 }
@@ -240,16 +322,16 @@ function addCandidate(candidate, metadata, report) {
     parsed: candidate,
   };
   const impliedVolatility = numberValue(
-    resolveOverride(metadata, "impliedVolatility", context),
+    resolveOverride(metadata, "impliedVolatility", context) ?? candidate.impliedVolatility,
   );
-  const gamma = numberValue(resolveOverride(metadata, "gamma", context));
+  const gamma = numberValue(resolveOverride(metadata, "gamma", context) ?? candidate.gamma);
   const contractMultiplier = numberValue(
-    resolveOverride(metadata, "contractMultiplier", context),
+    resolveOverride(metadata, "contractMultiplier", context) ?? candidate.contractMultiplier,
   );
   const underlyingPrice = numberValue(
-    resolveOverride(metadata, "underlyingPrice", context),
+    resolveOverride(metadata, "underlyingPrice", context) ?? candidate.underlyingPrice,
   );
-  const riskFreeRate = numberValue(resolveOverride(metadata, "riskFreeRate", context));
+  const riskFreeRate = numberValue(resolveOverride(metadata, "riskFreeRate", context) ?? candidate.riskFreeRate);
   const model = resolveOverride(metadata, "model", context) ?? defaultModel(candidate.venue);
   const sourceName = resolveOverride(metadata, "sourceName", context) ?? "AKShare";
   const asOf = resolveOverride(metadata, "asOf", context) ?? new Date(0).toISOString();
@@ -293,7 +375,7 @@ function addCandidate(candidate, metadata, report) {
     return;
   }
 
-  report.contracts.push({
+  const contract = {
     symbol: candidate.symbol,
     venue: candidate.venue,
     region: candidate.region,
@@ -317,7 +399,11 @@ function addCandidate(candidate, metadata, report) {
     bidSize: Number.isFinite(candidate.bidSize) ? candidate.bidSize : undefined,
     askPrice: Number.isFinite(candidate.askPrice) ? candidate.askPrice : undefined,
     askSize: Number.isFinite(candidate.askSize) ? candidate.askSize : undefined,
-  });
+  };
+  if (candidate.greeks && Object.keys(candidate.greeks).length > 0) {
+    contract.greeks = candidate.greeks;
+  }
+  report.contracts.push(contract);
 }
 
 function emptyReport() {
@@ -348,7 +434,8 @@ function resolveSymbol(metadata, parsed) {
   if (symbol) return symbol;
   const region = resolveOverride(metadata, "region", { parsed }) ?? "CN";
   const venue = resolveOverride(metadata, "venue", { parsed });
-  return venue ? `${region}.${venue}.${parsed.underlying}` : `${region}.${parsed.underlying}`;
+  const underlying = parsed?.underlying ?? resolveOverride(metadata, "underlying", { parsed }) ?? "UNKNOWN";
+  return venue ? `${region}.${venue}.${underlying}` : `${region}.${underlying}`;
 }
 
 function resolveOverride(metadata, key, context) {
@@ -392,4 +479,21 @@ function numberValue(value) {
 function positiveNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : null;
+}
+
+function normalizeOptionType(value, instrumentName) {
+  const text = String(value ?? "").trim().toLowerCase();
+  if (["call", "c", "\u8ba4\u8d2d", "\u770b\u6da8"].includes(text)) return "call";
+  if (["put", "p", "\u8ba4\u6cbd", "\u770b\u8dcc"].includes(text)) return "put";
+  if (/[cp]/i.test(String(instrumentName))) {
+    const match = /(?:^|[^a-z])([CP])(?:\d|M|-)/i.exec(String(instrumentName));
+    if (match) return match[1].toUpperCase() === "C" ? "call" : "put";
+  }
+  return null;
+}
+
+function compactGreeks(values) {
+  return Object.fromEntries(
+    Object.entries(values).filter(([, value]) => Number.isFinite(value)),
+  );
 }

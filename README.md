@@ -156,20 +156,29 @@ npm.cmd run collect:akshare -- --symbols=CN.CFFEX.IF,CN.SHFE.au --interval=60000
 npm.cmd run inspect:duckdb
 ```
 
+If Eastmoney, SSE, or Sina need a different command-line route than the browser, pass proxy settings to the Python process:
+
+```bash
+cmd /c "set AKSHARE_HTTPS_PROXY=http://127.0.0.1:7897&& npm.cmd run diagnose:akshare -- --symbols=CN.CFFEX.IF,CN.SSE.510050 --json"
+cmd /c "set AKSHARE_HTTPS_PROXY=http://127.0.0.1:7897&& npm.cmd run collect:akshare -- --symbols=CN.CFFEX.IF,CN.SSE.510050 --once"
+```
+
 The TradFi selector includes a broader catalog so the UI can expose intended coverage without pretending data is available:
 
 - China index / ETF options: `CN.CFFEX.IF`, `CN.CFFEX.IO`, `CN.CFFEX.MO`, `CN.CFFEX.HO`, `CN.SSE.510050`, `CN.SSE.510300`, `CN.SZSE.159919`.
 - China commodity options: `CN.SHFE.au`, `CN.SHFE.ag`, `CN.SHFE.cu`, `CN.INE.sc`, `CN.DCE.i`, `CN.DCE.m`, `CN.CZCE.SR`, `CN.CZCE.CF`.
 - US placeholders: `US.CBOE.SPX`, `US.CBOE.NDX`, `US.CME.ES`, `US.CME.NQ`, `US.CME.GC`, `US.NYMEX.CL`. These are marked `unsupported` until a stable option-chain source is validated.
 
-Current collector-backed first-pass symbols:
+Current Greeks-first collector-backed symbols:
 
-- `CN.CFFEX.IF` / `CN.CFFEX.IO`: financial option board via `option_finance_board`.
+- `CN.CFFEX.IF` / `CN.CFFEX.IO`: Eastmoney `option_risk_analysis_em`, `option_value_analysis_em`, and `option_current_em` first; `option_finance_board` remains raw fallback.
+- `CN.CFFEX.MO` / `CN.CFFEX.HO`: Eastmoney Greeks probes and collection plans are enabled when those instrument codes are present.
+- `CN.SSE.510050` / `CN.SSE.510300`: SSE `option_risk_indicator_sse(date)` plus Sina `option_sse_greeks_sina(symbol)` and Eastmoney fallback.
 - `CN.SHFE.au`: commodity option table via `option_commodity_contract_table_sina`, plus contract-list diagnostics via `option_commodity_contract_sina`.
 
-The AKShare probe also checks `option_comm_info` and `option_margin`. On this workstation on 2026-07-09, AKShare `1.18.64` returned samples for `option_finance_board`, `option_commodity_contract_sina`, `option_commodity_contract_table_sina`, and `option_comm_info`; `option_margin` returned no usable gold-option rows.
+The AKShare probe now checks Eastmoney risk/value/current option endpoints, SSE risk indicators, Sina ETF Greeks, commodity option tables, `option_comm_info`, and `option_margin`. It prints a field matrix for contract code, underlying, expiry, strike, option type, OI, price, IV, Delta, Gamma, Vega, Theta, multiplier, and underlying price so unstable source schemas are visible before collection.
 
-Important current limitation: AKShare raw option boards often provide quote, open interest, and contract names, but not normalized expiry dates, IV/Greeks, contract multipliers, or underlying prices in one stable endpoint. The collector stores raw rows and health counters, but GEX charts only appear after rows include a real gamma path: either a positive raw `gamma`, or positive IV plus a supported model (`blackScholes` for index/ETF-style options, `black76` for futures options), contract multiplier, expiry, underlying price, OI, strike, and option type. Missing values are skipped and surfaced in Data Health; the UI does not synthesize fake TradFi GEX or fake history.
+Important current limitation: AKShare raw option boards often provide quote, open interest, and contract names, but not normalized expiry dates, IV/Greeks, contract multipliers, or underlying prices in one stable endpoint. The collector stores raw rows and source-level warnings, but GEX charts only appear after rows include a real gamma path: either a positive raw `gamma`, or positive IV plus a supported model (`blackScholes` for index/ETF-style options, `black76` for futures options), contract multiplier, expiry, underlying price, OI, strike, and option type. Missing values are skipped and surfaced in Data Health; the UI does not synthesize fake TradFi GEX or fake history.
 
 When historical snapshots are insufficient, History and heatmap views show:
 

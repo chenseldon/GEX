@@ -1,9 +1,11 @@
 import {
+  normalizeAkshareGreeksRows,
   normalizeAkshareCommodityOptionTable,
   normalizeAkshareFinancialOptions,
 } from "../integrations/akshareNormalize.js";
 
 const NORMALIZER_BY_ROLE = {
+  greeks: normalizeAkshareGreeksRows,
   option_board: normalizeAkshareFinancialOptions,
   option_table: normalizeAkshareCommodityOptionTable,
 };

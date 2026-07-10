@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { calculateGexSnapshot } from "../src/domain/gex.js";
 import {
+  normalizeAkshareGreeksRows,
   normalizeAkshareCommodityOptionTable,
   normalizeAkshareFinancialOptions,
   parseAkshareInstrumentName,
@@ -198,6 +199,77 @@ test("metadata IV path produces contracts accepted by GEX snapshot", () => {
   assert.equal(Number.isFinite(snapshot.netGex), true);
 });
 
+test("Eastmoney risk rows with raw gamma normalize directly into TradFi contracts", () => {
+  const result = normalizeAkshareGreeksRows(
+    [
+      {
+        "代码": "IO2607-C-4200",
+        "名称": "沪深300股指期权",
+        "持仓量": 1250,
+        "最新价": 88.6,
+        "隐含波动率": "21.5%",
+        "Delta": 0.52,
+        "Gamma": 0.0008,
+        "Vega": 13.2,
+        "Theta": -4.6,
+      },
+    ],
+    {
+      symbol: "CN.CFFEX.IO",
+      venue: "CFFEX",
+      expiry: "2026-07-17",
+      underlyingPrice: 4210,
+      contractMultiplier: 100,
+      sourceName: "AKShare Eastmoney",
+      asOf: AS_OF,
+    },
+  );
+
+  assert.equal(result.skippedRows.length, 0);
+  assert.equal(result.contracts.length, 1);
+  assert.equal(result.contracts[0].instrumentName, "IO2607-C-4200");
+  assert.equal(result.contracts[0].impliedVolatility, 0.215);
+  assert.equal(result.contracts[0].gamma, 0.0008);
+  assert.equal(result.contracts[0].greeks.delta, 0.52);
+  assert.equal(result.contracts[0].greeks.vega, 13.2);
+  assert.equal(result.contracts[0].sourceName, "AKShare Eastmoney");
+});
+
+test("SSE risk indicator rows with IV but no raw gamma are accepted for model gamma calculation", () => {
+  const result = normalizeAkshareGreeksRows(
+    [
+      {
+        "合约交易代码": "510050C2607M03000",
+        "持仓量": 980,
+        "行权价": 3,
+        "认购认沽": "认购",
+        "隐含波动率": 0.22,
+      },
+    ],
+    {
+      symbol: "CN.SSE.510050",
+      venue: "SSE",
+      underlying: "510050",
+      expiry: "2026-07-22",
+      underlyingPrice: 3.12,
+      contractMultiplier: 10000,
+      sourceName: "AKShare SSE",
+      asOf: AS_OF,
+    },
+  );
+  const snapshot = calculateGexSnapshot({
+    symbol: "CN.SSE.510050",
+    spotPrice: 3.12,
+    asOf: AS_OF,
+    contracts: result.contracts,
+  });
+
+  assert.equal(result.skippedRows.length, 0);
+  assert.equal(result.contracts[0].gamma, undefined);
+  assert.equal(result.contracts[0].model, "blackScholes");
+  assert.equal(snapshot.byStrike.length, 1);
+});
+
 test("AKShare collector report normalizes raw rows into TradFi snapshot payload", () => {
   const payload = buildTradFiSnapshotFromAkshareReport({
     sourceName: "akshare",
@@ -243,6 +315,51 @@ test("AKShare collector report normalizes raw rows into TradFi snapshot payload"
   assert.equal(payload.snapshots[0].normalized.contracts[0].symbol, "CN.SHFE.au");
   assert.equal(payload.snapshots[0].normalized.contracts[0].model, "black76");
   assert.equal(payload.snapshots[0].normalized.warnings.skippedContracts, 0);
+});
+
+test("AKShare collector report records source warnings and normalizes Greeks role rows", () => {
+  const payload = buildTradFiSnapshotFromAkshareReport({
+    sourceName: "akshare",
+    observedAt: AS_OF,
+    requestedSymbols: ["CN.CFFEX.IO"],
+    status: "partial",
+    warnings: ["option_current_em unavailable: proxy error"],
+    snapshots: [
+      {
+        symbol: "CN.CFFEX.IO",
+        venue: "CFFEX",
+        region: "CN",
+        underlying: "IO",
+        assetClass: "index_option",
+        status: "ok",
+        rowCount: 1,
+        metadataPlaceholders: {
+          expiry: "2026-07-17",
+          contractMultiplier: 100,
+          underlyingPrice: 4210,
+        },
+        rawRows: [
+          {
+            interface: "option_risk_analysis_em",
+            role: "greeks",
+            rows: [
+              {
+                "代码": "IO2607-P-4200",
+                "持仓量": 120,
+                "隐含波动率": "22%",
+                "Gamma": 0.0009,
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.deepEqual(payload.warnings, ["option_current_em unavailable: proxy error"]);
+  assert.equal(payload.snapshots[0].normalized.contracts.length, 1);
+  assert.equal(payload.snapshots[0].normalized.contracts[0].optionType, "put");
+  assert.equal(payload.snapshots[0].normalized.contracts[0].gamma, 0.0009);
 });
 
 test("AKShare dry-run plans are preserved as TradFi source snapshots", () => {

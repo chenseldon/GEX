@@ -2,19 +2,45 @@ import argparse
 import importlib
 import json
 import math
+import os
 import time
 from datetime import datetime, timezone
 
 
 DEFAULT_SYMBOLS = ["CN.CFFEX.IF", "CN.SHFE.au"]
 
+EASTMONEY_GREEKS_INTERFACES = [
+    {
+        "name": "option_risk_analysis_em",
+        "args": {},
+        "role": "greeks",
+        "source": "eastmoney",
+        "optional": True,
+    },
+    {
+        "name": "option_value_analysis_em",
+        "args": {},
+        "role": "greeks",
+        "source": "eastmoney",
+        "optional": True,
+    },
+    {
+        "name": "option_current_em",
+        "args": {},
+        "role": "greeks",
+        "source": "eastmoney",
+        "optional": True,
+    },
+]
+
 SYMBOL_PLANS = {
     "CN.CFFEX.IF": {
         "region": "CN",
         "venue": "CFFEX",
-        "underlying": "IF",
+        "underlying": "IO",
         "assetClass": "index_option",
         "interfaces": [
+            *EASTMONEY_GREEKS_INTERFACES,
             {
                 "name": "option_finance_board",
                 "args": {
@@ -22,10 +48,22 @@ SYMBOL_PLANS = {
                     "end_month": "{end_month}",
                 },
                 "role": "option_board",
+                "source": "akshare",
+                "optional": True,
             },
         ],
+        "metadataPlaceholders": {
+            "expiry": None,
+            "impliedVolatility": None,
+            "gamma": None,
+            "contractMultiplier": 100,
+            "underlyingPrice": None,
+            "model": "blackScholes",
+            "sourceName": "AKShare Eastmoney",
+        },
         "warnings": [
-            "AKShare financial option boards do not provide normalized expiry, IV, Greeks, or multiplier in this collector stage.",
+            "CN.CFFEX.IF is collected through the CSI 300 index option alias IO when Eastmoney returns instrument-level Greeks.",
+            "Rows without real IV/gamma, OI, multiplier, expiry, or underlying price are stored as raw source rows but skipped from GEX.",
         ],
     },
     "CN.CFFEX.IO": {
@@ -34,6 +72,7 @@ SYMBOL_PLANS = {
         "underlying": "IO",
         "assetClass": "index_option",
         "interfaces": [
+            *EASTMONEY_GREEKS_INTERFACES,
             {
                 "name": "option_finance_board",
                 "args": {
@@ -41,10 +80,122 @@ SYMBOL_PLANS = {
                     "end_month": "{end_month}",
                 },
                 "role": "option_board",
+                "source": "akshare",
+                "optional": True,
             },
         ],
+        "metadataPlaceholders": {
+            "expiry": None,
+            "impliedVolatility": None,
+            "gamma": None,
+            "contractMultiplier": 100,
+            "underlyingPrice": None,
+            "model": "blackScholes",
+            "sourceName": "AKShare Eastmoney",
+        },
         "warnings": [
-            "AKShare financial option boards do not provide normalized expiry, IV, Greeks, or multiplier in this collector stage.",
+            "Rows without real IV/gamma, OI, multiplier, expiry, or underlying price are stored as raw source rows but skipped from GEX.",
+        ],
+    },
+    "CN.CFFEX.MO": {
+        "region": "CN",
+        "venue": "CFFEX",
+        "underlying": "MO",
+        "assetClass": "index_option",
+        "interfaces": EASTMONEY_GREEKS_INTERFACES,
+        "metadataPlaceholders": {
+            "expiry": None,
+            "impliedVolatility": None,
+            "gamma": None,
+            "contractMultiplier": 100,
+            "underlyingPrice": None,
+            "model": "blackScholes",
+            "sourceName": "AKShare Eastmoney",
+        },
+        "warnings": [
+            "CSI 1000 option support depends on Eastmoney returning MO instrument codes with IV/gamma fields.",
+        ],
+    },
+    "CN.CFFEX.HO": {
+        "region": "CN",
+        "venue": "CFFEX",
+        "underlying": "HO",
+        "assetClass": "index_option",
+        "interfaces": EASTMONEY_GREEKS_INTERFACES,
+        "metadataPlaceholders": {
+            "expiry": None,
+            "impliedVolatility": None,
+            "gamma": None,
+            "contractMultiplier": 100,
+            "underlyingPrice": None,
+            "model": "blackScholes",
+            "sourceName": "AKShare Eastmoney",
+        },
+        "warnings": [
+            "SSE 50 index option support depends on Eastmoney returning HO instrument codes with IV/gamma fields.",
+        ],
+    },
+    "CN.SSE.510050": {
+        "region": "CN",
+        "venue": "SSE",
+        "underlying": "510050",
+        "assetClass": "etf_option",
+        "interfaces": [
+            {
+                "name": "option_risk_indicator_sse",
+                "args": {"date": "{date}"},
+                "role": "greeks",
+                "source": "sse",
+                "optional": True,
+            },
+            {
+                "name": "option_sse_greeks_sina",
+                "args": {"symbol": "10003045"},
+                "role": "greeks",
+                "source": "sina",
+                "optional": True,
+            },
+            *EASTMONEY_GREEKS_INTERFACES,
+        ],
+        "metadataPlaceholders": {
+            "expiry": None,
+            "impliedVolatility": None,
+            "gamma": None,
+            "contractMultiplier": 10000,
+            "underlyingPrice": None,
+            "model": "blackScholes",
+            "sourceName": "AKShare SSE/Sina",
+        },
+        "warnings": [
+            "SSE ETF option Greeks require current SSE/Sina fields plus a real underlying price before GEX can be calculated.",
+        ],
+    },
+    "CN.SSE.510300": {
+        "region": "CN",
+        "venue": "SSE",
+        "underlying": "510300",
+        "assetClass": "etf_option",
+        "interfaces": [
+            {
+                "name": "option_risk_indicator_sse",
+                "args": {"date": "{date}"},
+                "role": "greeks",
+                "source": "sse",
+                "optional": True,
+            },
+            *EASTMONEY_GREEKS_INTERFACES,
+        ],
+        "metadataPlaceholders": {
+            "expiry": None,
+            "impliedVolatility": None,
+            "gamma": None,
+            "contractMultiplier": 10000,
+            "underlyingPrice": None,
+            "model": "blackScholes",
+            "sourceName": "AKShare SSE/Eastmoney",
+        },
+        "warnings": [
+            "SSE 300 ETF option rows are filtered later by normalized instrument fields; rows missing real Greeks are not used for GEX.",
         ],
     },
     "CN.SHFE.au": {
@@ -57,16 +208,27 @@ SYMBOL_PLANS = {
                 "name": "option_commodity_contract_table_sina",
                 "args": {"symbol": "\u9ec4\u91d1\u671f\u6743"},
                 "role": "option_table",
+                "source": "sina",
             },
             {
                 "name": "option_commodity_contract_sina",
                 "args": {"symbol": "\u9ec4\u91d1\u671f\u6743"},
                 "role": "contract_list",
+                "source": "sina",
                 "optional": True,
             },
         ],
+        "metadataPlaceholders": {
+            "expiry": None,
+            "impliedVolatility": None,
+            "gamma": None,
+            "contractMultiplier": None,
+            "underlyingPrice": None,
+            "model": "black76",
+            "sourceName": "AKShare Sina",
+        },
         "warnings": [
-            "AKShare commodity option tables do not provide normalized expiry, IV, Greeks, or multiplier in this collector stage.",
+            "Commodity option sources currently provide raw quote/OI data only; rows without IV or gamma remain raw and are not drawn as GEX.",
         ],
     },
 }
@@ -97,11 +259,19 @@ def main():
         default=None,
         help="Financial option end month in YYYYMM format. Defaults to the current UTC month.",
     )
+    parser.add_argument(
+        "--date",
+        default=None,
+        help="SSE risk indicator date in YYYYMMDD format. Defaults to the current UTC date.",
+    )
     args = parser.parse_args()
+
+    apply_proxy_environment()
 
     symbols = parse_symbols(args.symbols)
     end_month = args.end_month or datetime.now(timezone.utc).strftime("%Y%m")
-    plans, warnings = build_collection_plans(symbols, end_month)
+    query_date = args.date or datetime.now(timezone.utc).strftime("%Y%m%d")
+    plans, warnings = build_collection_plans(symbols, end_month, query_date)
 
     if args.dry_run:
         report = base_report(symbols, "dry_run")
@@ -148,7 +318,7 @@ def parse_symbols(value):
     return symbols or list(DEFAULT_SYMBOLS)
 
 
-def build_collection_plans(symbols, end_month):
+def build_collection_plans(symbols, end_month, query_date):
     plans = []
     warnings = []
     for symbol in symbols:
@@ -157,15 +327,15 @@ def build_collection_plans(symbols, end_month):
             warnings.append(f"Unsupported AKShare TradFi symbol: {symbol}")
             plans.append({"symbol": symbol, "status": "unsupported", "interfaces": []})
             continue
-        plans.append(expand_plan(symbol, template, end_month))
+        plans.append(expand_plan(symbol, template, end_month, query_date))
     return plans, warnings
 
 
-def expand_plan(symbol, template, end_month):
+def expand_plan(symbol, template, end_month, query_date):
     interfaces = []
     for item in template["interfaces"]:
         args = {
-            key: (end_month if value == "{end_month}" else value)
+            key: substitute_arg(value, end_month, query_date)
             for key, value in item["args"].items()
         }
         interfaces.append(
@@ -173,6 +343,7 @@ def expand_plan(symbol, template, end_month):
                 "name": item["name"],
                 "args": args,
                 "role": item["role"],
+                "source": item["source"],
                 "optional": bool(item.get("optional", False)),
             }
         )
@@ -184,15 +355,17 @@ def expand_plan(symbol, template, end_month):
         "underlying": template["underlying"],
         "assetClass": template["assetClass"],
         "interfaces": interfaces,
-        "metadataPlaceholders": {
-            "expiry": None,
-            "impliedVolatility": None,
-            "gamma": None,
-            "contractMultiplier": None,
-            "underlyingPrice": None,
-        },
+        "metadataPlaceholders": dict(template["metadataPlaceholders"]),
         "warnings": list(template.get("warnings", [])),
     }
+
+
+def substitute_arg(value, end_month, query_date):
+    if value == "{end_month}":
+        return end_month
+    if value == "{date}":
+        return query_date
+    return value
 
 
 def plan_status(plans):
@@ -221,7 +394,9 @@ def collect_snapshot(akshare, symbols, plans, warnings):
         if plan["status"] == "unsupported":
             report["snapshots"].append(plan)
             continue
-        report["snapshots"].append(collect_symbol_snapshot(akshare, plan))
+        snapshot = collect_symbol_snapshot(akshare, plan)
+        report["snapshots"].append(snapshot)
+        append_source_warnings(report, snapshot)
 
     ok_count = sum(1 for snapshot in report["snapshots"] if snapshot.get("status") == "ok")
     partial_count = sum(
@@ -256,6 +431,7 @@ def collect_symbol_snapshot(akshare, plan):
                 {
                     "interface": interface_plan["name"],
                     "role": interface_plan["role"],
+                    "source": interface_plan["source"],
                     "rows": result["rows"],
                 }
             )
@@ -275,6 +451,7 @@ def collect_interface(akshare, interface_plan):
         "name": interface_plan["name"],
         "args": interface_plan["args"],
         "role": interface_plan["role"],
+        "source": interface_plan["source"],
         "optional": interface_plan["optional"],
         "status": "unavailable",
         "rowCount": 0,
@@ -290,6 +467,14 @@ def collect_interface(akshare, interface_plan):
     except Exception as exc:
         entry["error"] = str(exc)
         return {"interface": entry, "rows": []}
+
+
+def append_source_warnings(report, snapshot):
+    for interface in snapshot.get("interfaces", []):
+        if interface.get("status") != "ok":
+            report["warnings"].append(
+                f"{snapshot.get('symbol')} {interface.get('source')}.{interface.get('name')} unavailable: {interface.get('error', 'unknown error')}"
+            )
 
 
 def dataframe_to_rows(result):
@@ -309,6 +494,17 @@ def dataframe_to_rows(result):
     if isinstance(result, dict):
         return [sanitize(result)], [str(key) for key in result.keys()]
     return [sanitize(result)], []
+
+
+def apply_proxy_environment():
+    http_proxy = os.environ.get("AKSHARE_HTTP_PROXY")
+    https_proxy = os.environ.get("AKSHARE_HTTPS_PROXY")
+    if http_proxy:
+        os.environ["HTTP_PROXY"] = http_proxy
+        os.environ["http_proxy"] = http_proxy
+    if https_proxy:
+        os.environ["HTTPS_PROXY"] = https_proxy
+        os.environ["https_proxy"] = https_proxy
 
 
 def base_report(symbols, mode):
