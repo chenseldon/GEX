@@ -10,6 +10,30 @@ import { instruments, optionChains, SAMPLE_AS_OF } from "../domain/sampleData.js
 import { createDuckDbRepository, getDuckDbPath } from "../data/duckdbRepository.js";
 import { getLiveDeribitSnapshot, measureDeribitLatency } from "../data/deribitLive.js";
 
+const TRADFI_CATALOG = [
+  { symbol: "CN.CFFEX.IF", name: "CSI 300 Index Options (AKShare IF alias)", venue: "CFFEX", exchanges: ["CFFEX"], group: "China Index/ETF Options", connector: "akshare", supportStatus: "partial" },
+  { symbol: "CN.CFFEX.IO", name: "CSI 300 Index Options", venue: "CFFEX", exchanges: ["CFFEX"], group: "China Index/ETF Options", connector: "akshare", supportStatus: "partial" },
+  { symbol: "CN.CFFEX.MO", name: "CSI 1000 Index Options", venue: "CFFEX", exchanges: ["CFFEX"], group: "China Index/ETF Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.CFFEX.HO", name: "SSE 50 Index Options", venue: "CFFEX", exchanges: ["CFFEX"], group: "China Index/ETF Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.SSE.510050", name: "SSE 50 ETF Options", venue: "SSE", exchanges: ["SSE"], group: "China Index/ETF Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.SSE.510300", name: "SSE 300 ETF Options", venue: "SSE", exchanges: ["SSE"], group: "China Index/ETF Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.SZSE.159919", name: "SZSE 300 ETF Options", venue: "SZSE", exchanges: ["SZSE"], group: "China Index/ETF Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.SHFE.au", name: "SHFE Gold Options", venue: "SHFE", exchanges: ["SHFE"], group: "China Commodity Options", connector: "akshare", supportStatus: "partial" },
+  { symbol: "CN.SHFE.ag", name: "SHFE Silver Options", venue: "SHFE", exchanges: ["SHFE"], group: "China Commodity Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.SHFE.cu", name: "SHFE Copper Options", venue: "SHFE", exchanges: ["SHFE"], group: "China Commodity Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.INE.sc", name: "INE Crude Oil Options", venue: "INE", exchanges: ["INE"], group: "China Commodity Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.DCE.i", name: "DCE Iron Ore Options", venue: "DCE", exchanges: ["DCE"], group: "China Commodity Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.DCE.m", name: "DCE Soymeal Options", venue: "DCE", exchanges: ["DCE"], group: "China Commodity Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.CZCE.SR", name: "CZCE Sugar Options", venue: "CZCE", exchanges: ["CZCE"], group: "China Commodity Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "CN.CZCE.CF", name: "CZCE Cotton Options", venue: "CZCE", exchanges: ["CZCE"], group: "China Commodity Options", connector: "akshare", supportStatus: "planned" },
+  { symbol: "US.CBOE.SPX", name: "S&P 500 Index Options", venue: "CBOE", exchanges: ["CBOE"], group: "US Index/Futures Options", connector: null, supportStatus: "unsupported" },
+  { symbol: "US.CBOE.NDX", name: "Nasdaq-100 Index Options", venue: "CBOE", exchanges: ["CBOE"], group: "US Index/Futures Options", connector: null, supportStatus: "unsupported" },
+  { symbol: "US.CME.ES", name: "E-mini S&P 500 Futures Options", venue: "CME", exchanges: ["CME"], group: "US Index/Futures Options", connector: null, supportStatus: "unsupported" },
+  { symbol: "US.CME.NQ", name: "E-mini Nasdaq-100 Futures Options", venue: "CME", exchanges: ["CME"], group: "US Index/Futures Options", connector: null, supportStatus: "unsupported" },
+  { symbol: "US.CME.GC", name: "COMEX Gold Options", venue: "CME", exchanges: ["CME", "COMEX"], group: "US Index/Futures Options", connector: null, supportStatus: "unsupported" },
+  { symbol: "US.NYMEX.CL", name: "NYMEX WTI Crude Oil Options", venue: "NYMEX", exchanges: ["NYMEX", "CME"], group: "US Index/Futures Options", connector: null, supportStatus: "unsupported" },
+];
+
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
   "cache-control": "no-store",
@@ -41,6 +65,14 @@ export function createApiHandler() {
 
   async function getSnapshot(symbol) {
     const source = process.env.DATA_SOURCE ?? "auto";
+    if (isTradFiSymbol(symbol)) {
+      return getDuckDbTradFiSnapshot(symbol, source);
+    }
+
+    if (source === "akshare") {
+      throw new Error(`AKShare data unavailable for symbol: ${symbol}`);
+    }
+
     if (source === "duckdb") {
       const duckdb = await getDuckDbDeribitSnapshot(symbol);
       if (duckdb) {
@@ -221,6 +253,14 @@ export function createApiHandler() {
 
       if (url.pathname === "/api/data-health") {
         const deribit = await getDeribitHealth();
+        const akshare = deribit.akshare ?? {
+          status: "empty",
+          lastRunAt: null,
+          sourceRuns: 0,
+          contracts: 0,
+          skippedContracts: 0,
+          warnings: [],
+        };
         return json({
           sources: [
             {
@@ -231,6 +271,22 @@ export function createApiHandler() {
               limitation: "Static fixture for model and UI validation; replace with live collector in V1.",
             },
             deribit,
+            {
+              name: "akshare-duckdb",
+              status: akshare.status,
+              lastSnapshotAt: akshare.lastRunAt,
+              sourceRuns: akshare.sourceRuns,
+              rawSnapshots: akshare.rawSnapshots,
+              contracts: akshare.contracts,
+              skippedContracts: akshare.skippedContracts,
+              missingIv: akshare.missingIv,
+              missingGamma: akshare.missingGamma,
+              missingOi: akshare.missingOi,
+              missingMultiplier: akshare.missingMultiplier,
+              missingExpiry: akshare.missingExpiry,
+              missingUnderlyingPrice: akshare.missingUnderlyingPrice,
+              warnings: akshare.warnings,
+            },
           ],
           coverage: {
             symbols: instruments.length,
@@ -242,23 +298,43 @@ export function createApiHandler() {
 
       return json({ error: "Not found" }, 404);
     } catch (error) {
-      const status = /Unsupported symbol|symbol is required|type must be|coverage must be|Deribit data unavailable|DuckDB data unavailable/.test(error.message)
+      const status = /Unsupported symbol|symbol is required|type must be|coverage must be|Deribit data unavailable|DuckDB data unavailable|AKShare data unavailable/.test(error.message)
         ? 400
         : 500;
-      return json({ error: error.message }, status);
+      return json(
+        {
+          error: error.message,
+          status: /data unavailable/.test(error.message) ? "unavailable" : undefined,
+        },
+        status,
+      );
     }
   };
 }
 
 function requiredSymbol(url) {
-  const symbol = url.searchParams.get("symbol")?.toUpperCase();
-  if (!symbol) {
+  const raw = url.searchParams.get("symbol")?.trim();
+  if (!raw) {
     throw new Error("symbol is required");
   }
-  if (!optionChains[symbol]) {
-    throw new Error(`Unsupported symbol: ${symbol}`);
+  const cryptoSymbol = raw.toUpperCase();
+  if (optionChains[cryptoSymbol]) {
+    return cryptoSymbol;
   }
-  return symbol;
+  if (isTradFiSymbol(raw)) {
+    return canonicalTradFiSymbol(raw);
+  }
+  throw new Error(`Unsupported symbol: ${raw}`);
+}
+
+function isTradFiSymbol(symbol) {
+  return /^[A-Za-z]{2}\.[A-Za-z0-9]+\.[A-Za-z0-9_.-]+$/.test(String(symbol ?? ""));
+}
+
+function canonicalTradFiSymbol(symbol) {
+  const parts = String(symbol).trim().split(".");
+  if (parts.length < 3) return String(symbol).trim();
+  return `${parts[0].toUpperCase()}.${parts[1].toUpperCase()}.${parts.slice(2).join(".")}`;
 }
 
 function json(payload, status = 200) {
@@ -331,12 +407,24 @@ async function getInstrumentList() {
     return instruments;
   }
 
-  const deribit = await getDeribitAvailableInstruments();
-  if (deribit.length > 0 || source === "deribit") {
-    return deribit;
+  const includeCrypto = source !== "akshare";
+  const includeTradFi = ["auto", "duckdb", "akshare"].includes(source);
+  const lists = [];
+
+  if (includeCrypto) {
+    const deribit = await getDeribitAvailableInstruments();
+    if (deribit.length > 0 || source === "deribit") {
+      lists.push(...deribit);
+    } else {
+      lists.push(...instruments);
+    }
   }
 
-  return instruments;
+  if (includeTradFi) {
+    lists.push(...await getTradFiAvailableInstruments());
+  }
+
+  return lists;
 }
 
 async function getDeribitAvailableInstruments() {
@@ -401,6 +489,121 @@ async function getDuckDbDeribitSnapshot(symbol) {
   }
 }
 
+async function getDuckDbTradFiSnapshot(symbol, source) {
+  if (!["auto", "duckdb", "akshare"].includes(source)) {
+    throw new Error(`AKShare data unavailable for symbol: ${symbol}`);
+  }
+
+  let repo;
+  try {
+    repo = await createDuckDbRepository({ dbPath: getDuckDbPath() });
+    const resolvedSymbol = await resolveTradFiSymbol(repo, symbol);
+    const latest = resolvedSymbol ? await repo.getLatestTradFiOptionChain(resolvedSymbol) : null;
+    if (!latest || latest.contracts.length === 0) {
+      throw new Error(`AKShare data unavailable for symbol: ${symbol}`);
+    }
+    const snapshot = calculateGexSnapshot(latest);
+    return {
+      ...snapshot,
+      sourceLabel: "AKShare",
+      sourceName: "akshare-duckdb",
+      historySnapshots: [],
+    };
+  } catch (error) {
+    if (/AKShare data unavailable/.test(error.message)) {
+      throw error;
+    }
+    throw new Error(`AKShare data unavailable for symbol: ${symbol}`);
+  } finally {
+    repo?.close();
+  }
+}
+
+async function getTradFiAvailableInstruments() {
+  const catalog = new Map(TRADFI_CATALOG.map((item) => [item.symbol, catalogInstrument(item)]));
+  let repo;
+  try {
+    repo = await createDuckDbRepository({ dbPath: getDuckDbPath() });
+    const available = await repo.getTradFiAvailableSymbols();
+    for (const row of available.filter((item) => item.lastSnapshotAt)) {
+      const base = catalog.get(row.symbol) ?? catalogInstrument({
+        symbol: row.symbol,
+        name: tradFiDisplayName(row.symbol),
+        venue: tradFiVenue(row.symbol),
+        exchanges: [tradFiVenue(row.symbol)],
+        group: tradFiGroup(row.symbol),
+        connector: "akshare",
+        supportStatus: "partial",
+      });
+      catalog.set(row.symbol, {
+        ...base,
+        lastSnapshotAt: row.lastSnapshotAt,
+        tickerCount: row.tickerCount,
+        contractCount: row.contractCount,
+        dataStatus: Number(row.contractCount ?? row.tickerCount ?? 0) > 0 ? "available" : "needs_fields",
+        status: Number(row.contractCount ?? row.tickerCount ?? 0) > 0 ? "available" : row.status ?? "needs_fields",
+      });
+    }
+    return [...catalog.values()];
+  } catch {
+    return [...catalog.values()];
+  } finally {
+    repo?.close();
+  }
+}
+
+function catalogInstrument(item) {
+  return {
+    symbol: item.symbol,
+    name: item.name,
+    venue: item.venue,
+    exchanges: item.exchanges ?? [item.venue].filter(Boolean),
+    assetClass: "TradFi",
+    market: "tradfi",
+    group: item.group ?? tradFiGroup(item.symbol),
+    spotPrice: null,
+    lastSnapshotAt: null,
+    tickerCount: 0,
+    contractCount: 0,
+    connector: item.connector,
+    supportStatus: item.supportStatus,
+    dataStatus: item.supportStatus === "unsupported" ? "unsupported" : "needs_collector",
+    status: item.supportStatus === "unsupported" ? "unsupported" : "needs_collector",
+  };
+}
+
+async function resolveTradFiSymbol(repo, symbol) {
+  const available = await repo.getTradFiAvailableSymbols();
+  const exact = available.find((row) => row.symbol === symbol);
+  if (exact) return exact.symbol;
+  const lower = String(symbol).toLowerCase();
+  return available.find((row) => String(row.symbol).toLowerCase() === lower)?.symbol ?? symbol;
+}
+
+function tradFiVenue(symbol) {
+  return String(symbol).split(".")[1] ?? "TradFi";
+}
+
+function tradFiDisplayName(symbol) {
+  const [region, venue, underlying] = String(symbol).split(".");
+  if (!region || !venue || !underlying) return String(symbol);
+  return `${underlying.toUpperCase()} ${venue} Options`;
+}
+
+function tradFiGroup(symbol) {
+  const venue = tradFiVenue(symbol).toUpperCase();
+  if (["CFFEX", "SSE", "SZSE"].includes(venue)) {
+    return "China Index/ETF Options";
+  }
+  if (["SHFE", "DCE", "CZCE", "INE", "GFEX"].includes(venue)) {
+    return "China Commodity Options";
+  }
+  if (String(symbol).toUpperCase().startsWith("US.")) {
+    return "US Index/Futures Options";
+  }
+  return "TradFi Options";
+}
+
 function safeSnapshot(input) {
   try {
     return calculateGexSnapshot(input);
@@ -410,7 +613,7 @@ function safeSnapshot(input) {
 }
 
 function buildRealTrendSeries(snapshot, { hours = 24 } = {}) {
-  if (!isDeribitMarketSnapshot(snapshot)) {
+  if (!isRealMarketSnapshot(snapshot)) {
     return buildTrendSeries(snapshot);
   }
 
@@ -420,9 +623,9 @@ function buildRealTrendSeries(snapshot, { hours = 24 } = {}) {
   return {
     symbol: snapshot.symbol,
     asOf: snapshot.asOf,
-    source: "deribit-duckdb",
+    source: snapshot.sourceName,
     status: realPoints.length >= 2 ? "ready" : "accumulating",
-    warning: realPoints.length >= 2 ? null : "Not enough historical Deribit snapshots yet. Keep the collector running to build this view.",
+    warning: realPoints.length >= 2 ? null : notEnoughHistoryWarning(snapshot, "view"),
     points: realPoints,
   };
 }
@@ -446,7 +649,7 @@ function buildRealHeatmapMatrix(snapshot, { type = "net", window = "24h" } = {})
   if (!["net", "abs"].includes(type)) {
     throw new Error("type must be net or abs");
   }
-  if (!isDeribitMarketSnapshot(snapshot)) {
+  if (!isRealMarketSnapshot(snapshot)) {
     return buildHeatmapMatrix(snapshot, { type });
   }
 
@@ -455,9 +658,9 @@ function buildRealHeatmapMatrix(snapshot, { type = "net", window = "24h" } = {})
     return {
       symbol: snapshot.symbol,
       type,
-      source: "deribit-duckdb",
+      source: snapshot.sourceName,
       status: "accumulating",
-      warning: "Not enough historical Deribit snapshots yet. Keep the collector running to build this heatmap.",
+      warning: notEnoughHistoryWarning(snapshot, "heatmap"),
       columns: [],
       rows: [],
       indexPath: [],
@@ -483,7 +686,7 @@ function buildRealHeatmapMatrix(snapshot, { type = "net", window = "24h" } = {})
   return {
     symbol: snapshot.symbol,
     type,
-    source: "deribit-duckdb",
+    source: snapshot.sourceName,
     status: "ready",
     warning: null,
     columns,
@@ -494,7 +697,7 @@ function buildRealHeatmapMatrix(snapshot, { type = "net", window = "24h" } = {})
 }
 
 function buildRealChangeTable(snapshot, { coverage = 50 } = {}) {
-  if (!isDeribitMarketSnapshot(snapshot)) {
+  if (!isRealMarketSnapshot(snapshot)) {
     return buildChangeTable(snapshot, { coverage });
   }
   const allowed = [50, 80, 90, 100];
@@ -514,9 +717,9 @@ function buildRealChangeTable(snapshot, { coverage = 50 } = {}) {
     return {
       symbol: snapshot.symbol,
       coverage: normalizedCoverage,
-      source: "deribit-duckdb",
+      source: snapshot.sourceName,
       status: "accumulating",
-      warning: "Not enough historical Deribit snapshots yet. Change percentages will appear after another collection point.",
+      warning: notEnoughHistoryWarning(snapshot, "change table"),
       columns: selected.map((row) => row.strike),
       periods: ["Now"],
       rows: selected.map((row) => ({ strike: row.strike, now: Math.abs(row.gex), changes: {} })),
@@ -527,7 +730,7 @@ function buildRealChangeTable(snapshot, { coverage = 50 } = {}) {
   return {
     symbol: snapshot.symbol,
     coverage: normalizedCoverage,
-    source: "deribit-duckdb",
+    source: snapshot.sourceName,
     status: "ready",
     warning: null,
     columns: selected.map((row) => row.strike),
@@ -552,14 +755,19 @@ function historyForWindow(snapshot, hours) {
   const filtered = history
     .filter((item) => new Date(item.asOf).getTime() >= cutoff)
     .sort((a, b) => new Date(a.asOf) - new Date(b.asOf));
-  if (filtered.length === 0 && isDeribitMarketSnapshot(snapshot)) {
+  if (filtered.length === 0 && isRealMarketSnapshot(snapshot)) {
     return [snapshot];
   }
   return filtered;
 }
 
-function isDeribitMarketSnapshot(snapshot) {
-  return snapshot.sourceName === "deribit-duckdb" || snapshot.sourceName === "deribit-live";
+function isRealMarketSnapshot(snapshot) {
+  return ["deribit-duckdb", "deribit-live", "akshare-duckdb"].includes(snapshot.sourceName);
+}
+
+function notEnoughHistoryWarning(snapshot, view) {
+  const label = snapshot.sourceName === "akshare-duckdb" ? "AKShare" : "Deribit";
+  return `Not enough ${label} snapshots yet. Keep the collector running to build this ${view}.`;
 }
 
 function windowHours(window) {

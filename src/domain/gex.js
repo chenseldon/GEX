@@ -1,3 +1,5 @@
+import { resolveOptionGamma } from "./optionPricing.js";
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const YEAR_DAYS = 365;
 const MONTHS = new Map([
@@ -45,8 +47,8 @@ export function parseDeribitInstrumentName(instrumentName) {
 }
 
 export function calculateGexSnapshot({ symbol, spotPrice, asOf, contracts }) {
-  if (!SUPPORTED_SYMBOLS.includes(symbol)) {
-    throw new Error(`Unsupported symbol: ${symbol}`);
+  if (typeof symbol !== "string" || symbol.trim() === "") {
+    throw new Error("symbol is required");
   }
   if (!Number.isFinite(spotPrice) || spotPrice <= 0) {
     throw new Error("spotPrice must be a positive number");
@@ -55,19 +57,37 @@ export function calculateGexSnapshot({ symbol, spotPrice, asOf, contracts }) {
     throw new Error("contracts must contain at least one option contract");
   }
 
-  const normalized = contracts.map((contract) =>
-    normalizeContract(contract, symbol, spotPrice, asOf),
-  );
+  const skippedContracts = [];
+  const normalized = contracts
+    .map((contract) => normalizeContract(contract, symbol, spotPrice, asOf))
+    .filter((contract, index) => {
+      if (contract) return true;
+      skippedContracts.push({
+        index,
+        instrumentName: contracts[index]?.instrumentName ?? null,
+        reason: "unusable option contract inputs",
+      });
+      return false;
+    });
+  if (normalized.length === 0) {
+    throw new Error("contracts did not contain any usable option contract");
+  }
   const byStrike = aggregateByStrike(normalized);
   const byExpiry = aggregateByExpiry(normalized);
   const totalOpenInterest = normalized.reduce(
     (sum, contract) => sum + contract.openInterest,
     0,
   );
-  const averageImpliedVolatility = normalized.reduce(
-    (sum, contract) => sum + contract.impliedVolatility * contract.openInterest,
+  const ivOpenInterest = normalized.reduce(
+    (sum, contract) => sum + (Number.isFinite(contract.impliedVolatility) ? contract.openInterest : 0),
     0,
-  ) / Math.max(totalOpenInterest, 1);
+  );
+  const averageImpliedVolatility = ivOpenInterest > 0
+    ? normalized.reduce(
+      (sum, contract) => sum + (Number.isFinite(contract.impliedVolatility) ? contract.impliedVolatility * contract.openInterest : 0),
+      0,
+    ) / ivOpenInterest
+    : null;
   const netGex = byStrike.reduce((sum, row) => sum + row.gex, 0);
   const netDelta = normalized.reduce((sum, contract) => sum + contract.netDelta, 0);
   const callWall = largestOpenInterestStrike(normalized, "call");
@@ -82,7 +102,8 @@ export function calculateGexSnapshot({ symbol, spotPrice, asOf, contracts }) {
     netGex: round(netGex, 2),
     netDelta: round(netDelta, 2),
     totalOpenInterest,
-    averageImpliedVolatility: round(averageImpliedVolatility, 4),
+    averageImpliedVolatility: averageImpliedVolatility === null ? null : round(averageImpliedVolatility, 4),
+    skippedContracts,
     gammaFlip,
     callWall,
     putWall,
@@ -293,9 +314,7 @@ export function classifySignalState({
 }
 
 function normalizeContract(contract, symbol, spotPrice, asOf) {
-  const parsed = contract.instrumentName
-    ? parseDeribitInstrumentName(contract.instrumentName)
-    : {};
+  const parsed = parseContractFields(contract);
   const optionType = contract.optionType ?? parsed.optionType;
   const strike = Number(contract.strike ?? parsed.strike);
   const expiry = contract.expiry ?? parsed.expiry;
@@ -303,16 +322,41 @@ function normalizeContract(contract, symbol, spotPrice, asOf) {
   const openInterest = Number(contract.openInterest);
   const volume = Number(contract.volume ?? 0);
   const markPrice = Number(contract.markPrice ?? 0);
-  const timeToExpiryYears = yearsToExpiry(expiry, asOf);
-  const gamma = blackScholesGamma({
-    spotPrice,
+  const underlyingPrice = positiveNumber(contract.underlyingPrice) ?? spotPrice;
+  const timeToExpiryYears = positiveNumber(contract.timeToExpiryYears) ?? yearsToExpiry(expiry, asOf);
+  const contractMultiplier = positiveNumber(contract.contractMultiplier) ?? 1;
+  const riskFreeRate = Number.isFinite(Number(contract.riskFreeRate)) ? Number(contract.riskFreeRate) : 0;
+  const model = contract.model ?? "blackScholes";
+  const gamma = resolveOptionGamma({
+    gamma: contract.gamma,
+    greeks: contract.greeks,
+    underlyingPrice,
     strike,
-    volatility: impliedVolatility,
+    impliedVolatility,
     timeToExpiryYears,
+    riskFreeRate,
+    model,
   });
+  if (
+    !["call", "put"].includes(optionType) ||
+    !Number.isFinite(strike) ||
+    strike <= 0 ||
+    !expiry ||
+    !Number.isFinite(openInterest) ||
+    openInterest < 0 ||
+    !Number.isFinite(underlyingPrice) ||
+    underlyingPrice <= 0 ||
+    !Number.isFinite(timeToExpiryYears) ||
+    timeToExpiryYears <= 0 ||
+    !Number.isFinite(contractMultiplier) ||
+    contractMultiplier <= 0 ||
+    gamma === null
+  ) {
+    return null;
+  }
   const delta = approximateDelta({ spotPrice, strike, optionType });
   const direction = optionType === "put" ? -1 : 1;
-  const gex = direction * gamma * spotPrice * spotPrice * 0.01 * openInterest;
+  const gex = direction * gamma * underlyingPrice * underlyingPrice * 0.01 * openInterest * contractMultiplier;
 
   return {
     symbol,
@@ -320,14 +364,35 @@ function normalizeContract(contract, symbol, spotPrice, asOf) {
     expiry,
     strike,
     optionType,
-    impliedVolatility,
+    impliedVolatility: Number.isFinite(impliedVolatility) ? impliedVolatility : null,
     openInterest,
     volume,
     markPrice,
+    underlyingPrice,
+    timeToExpiryYears,
+    riskFreeRate,
+    model,
+    contractMultiplier,
     gamma,
     gex,
     netDelta: direction * Math.abs(delta) * openInterest,
   };
+}
+
+function parseContractFields(contract) {
+  const hasExplicitFields =
+    contract.optionType !== undefined &&
+    contract.strike !== undefined &&
+    contract.expiry !== undefined;
+  if (!contract.instrumentName || hasExplicitFields) {
+    return {};
+  }
+
+  try {
+    return parseDeribitInstrumentName(contract.instrumentName);
+  } catch {
+    return {};
+  }
 }
 
 function yearsToExpiry(expiry, asOf) {
@@ -336,23 +401,10 @@ function yearsToExpiry(expiry, asOf) {
   return Math.max((expiryTime - asOfTime) / DAY_MS / YEAR_DAYS, 1 / YEAR_DAYS);
 }
 
-function blackScholesGamma({ spotPrice, strike, volatility, timeToExpiryYears }) {
-  const sigma = Math.max(volatility, 0.01);
-  const sqrtT = Math.sqrt(timeToExpiryYears);
-  const d1 =
-    (Math.log(spotPrice / strike) + 0.5 * sigma * sigma * timeToExpiryYears) /
-    (sigma * sqrtT);
-  return normalPdf(d1) / (spotPrice * sigma * sqrtT);
-}
-
 function approximateDelta({ spotPrice, strike, optionType }) {
   const moneyness = spotPrice / strike - 1;
   const magnitude = clamp(0.5 + moneyness * 6, 0.05, 0.95);
   return optionType === "call" ? magnitude : magnitude - 1;
-}
-
-function normalPdf(value) {
-  return Math.exp(-0.5 * value * value) / Math.sqrt(2 * Math.PI);
 }
 
 function aggregateByStrike(contracts) {
@@ -758,4 +810,9 @@ function clamp(value, min, max) {
 function round(value, decimals = 2) {
   const factor = 10 ** decimals;
   return Math.round(value * factor) / factor;
+}
+
+function positiveNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : null;
 }

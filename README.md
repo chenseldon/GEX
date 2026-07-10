@@ -5,8 +5,9 @@ Crypto-first Gamma Exposure research platform inspired by GammaFlip-style workfl
 This repository is a runnable V2 prototype with:
 
 - A pure Node.js API for instruments, GEX summary, GEX by strike, term structure, signals, and data health.
-- A GammaFlip-style browser research app for BTC and ETH with live Deribit option-chain snapshots by default.
+- A GammaFlip-style browser research app for BTC and ETH with live Deribit option-chain snapshots by default, plus a TradFi selector backed by AKShare/DuckDB when real snapshots exist.
 - A Deribit public market data collector backed by a local DuckDB file for historical option-chain research.
+- An AKShare Python collector path for China index/ETF/commodity option research data, persisted through the same DuckDB health surface.
 - A tested model core for instrument parsing, GEX aggregation, gamma flip, walls, max pain, and signal classification.
 - V2 dashboard widgets: gauges, dual-layer GEX by strike, key levels, 24h trend charts, 3D-style heatmaps, and GEX change table coverage toggles.
 - V2 studio widgets: Now/Expiry/History/Forecast tabs, Snapshot/Day/Hour mode buttons, dual-layer strike chart, summary rail, marker chips, zoom slider, CSV export, and notes.
@@ -38,6 +39,9 @@ npm.cmd run diagnose:deribit
 npm.cmd run latency:deribit -- --symbols=BTC,ETH --samples=5
 npm.cmd run collect:deribit -- --symbols=BTC,ETH --once
 npm.cmd run schedule:deribit:daily -- --time=07:00 --symbols=BTC,ETH
+npm.cmd run diagnose:akshare -- --symbols=CN.CFFEX.IF,CN.SHFE.au
+npm.cmd run collect:akshare -- --symbols=CN.CFFEX.IF,CN.SHFE.au --dry-run
+npm.cmd run collect:akshare -- --symbols=CN.CFFEX.IF,CN.SHFE.au --once
 npm.cmd run inspect:duckdb
 ```
 
@@ -62,7 +66,7 @@ GET /api/gex/change-table?symbol=BTC&coverage=50
 GET /api/deribit/latency?symbol=BTC&samples=3
 ```
 
-The current V2 uses Deribit live public market data for current BTC/ETH snapshots. DuckDB is used as the historical collector and cache for History, heatmaps, and change tables. Fixture mode remains available for offline tests and UI development.
+The current V2 uses Deribit live public market data for current BTC/ETH snapshots. DuckDB is used as the historical collector and cache for History, heatmaps, and change tables. TradFi symbols such as `CN.CFFEX.IF` and `CN.SHFE.au` are served only from real AKShare DuckDB snapshots. Fixture mode remains available for offline tests and UI development.
 
 ## Deribit + DuckDB Data Pipeline
 
@@ -94,12 +98,14 @@ Runtime data source selection:
 ```bash
 cmd /c "set DATA_SOURCE=auto&& npm.cmd start"
 cmd /c "set DATA_SOURCE=deribit&& npm.cmd start"
+cmd /c "set DATA_SOURCE=akshare&& npm.cmd start"
 cmd /c "set DATA_SOURCE=fixture&& npm.cmd start"
 ```
 
 - `fixture`: always use deterministic sample data.
-- `auto`: default mode; use Deribit Live for current snapshots, attach DuckDB history when available, then fall back to DuckDB and fixture data if live access fails.
+- `auto`: default mode; Crypto uses Deribit Live for current snapshots and attaches DuckDB history when available. TradFi uses the latest AKShare DuckDB snapshot only.
 - `deribit`: require Deribit Live current data and return an API error when unavailable.
+- `akshare`: require AKShare DuckDB data for TradFi symbols and return structured unavailable responses otherwise.
 - `duckdb`: reserved for local historical snapshot workflows; set `DERIBIT_REALTIME=0` to force current endpoints to read DuckDB before fixture fallback.
 
 Deribit currently provides BTC and ETH option chains in this pipeline. Symbols without Deribit option instruments, such as SOL, are hidden from the live selector until another venue connector is added.
@@ -136,6 +142,51 @@ python scripts/deribit_probe.py --symbol BTC --csv output/deribit_btc_options_li
 ```
 
 Do not commit `.env` files or local DuckDB databases.
+
+## TradFi via AKShare
+
+TradFi support is intentionally collector-driven: the Node web API never imports Python or AKShare at request time. Run the Python-backed collector first, then the app reads the latest normalized rows from DuckDB.
+
+```bash
+pip install akshare pandas
+npm.cmd run diagnose:akshare -- --symbols=CN.CFFEX.IF,CN.SHFE.au --json
+npm.cmd run collect:akshare -- --symbols=CN.CFFEX.IF,CN.SHFE.au --dry-run
+npm.cmd run collect:akshare -- --symbols=CN.CFFEX.IF,CN.SHFE.au --once
+npm.cmd run collect:akshare -- --symbols=CN.CFFEX.IF,CN.SHFE.au --interval=600000
+npm.cmd run inspect:duckdb
+```
+
+If Eastmoney, SSE, or Sina need a different command-line route than the browser, pass proxy settings to the Python process:
+
+```bash
+cmd /c "set AKSHARE_HTTPS_PROXY=http://127.0.0.1:7897&& npm.cmd run diagnose:akshare -- --symbols=CN.CFFEX.IF,CN.SSE.510050 --json"
+cmd /c "set AKSHARE_HTTPS_PROXY=http://127.0.0.1:7897&& npm.cmd run collect:akshare -- --symbols=CN.CFFEX.IF,CN.SSE.510050 --once"
+```
+
+The TradFi selector includes a broader catalog so the UI can expose intended coverage without pretending data is available:
+
+- China index / ETF options: `CN.CFFEX.IF`, `CN.CFFEX.IO`, `CN.CFFEX.MO`, `CN.CFFEX.HO`, `CN.SSE.510050`, `CN.SSE.510300`, `CN.SZSE.159919`.
+- China commodity options: `CN.SHFE.au`, `CN.SHFE.ag`, `CN.SHFE.cu`, `CN.INE.sc`, `CN.DCE.i`, `CN.DCE.m`, `CN.CZCE.SR`, `CN.CZCE.CF`.
+- US placeholders: `US.CBOE.SPX`, `US.CBOE.NDX`, `US.CME.ES`, `US.CME.NQ`, `US.CME.GC`, `US.NYMEX.CL`. These are marked `unsupported` until a stable option-chain source is validated.
+
+Current Greeks-first collector-backed symbols:
+
+- `CN.CFFEX.IF` / `CN.CFFEX.IO`: Eastmoney `option_risk_analysis_em`, `option_value_analysis_em`, and `option_current_em` first; `option_finance_board` remains raw fallback.
+- `CN.CFFEX.MO` / `CN.CFFEX.HO`: Eastmoney Greeks probes and collection plans are enabled when those instrument codes are present.
+- `CN.SSE.510050` / `CN.SSE.510300`: SSE `option_risk_indicator_sse(date)` plus Sina `option_sse_greeks_sina(symbol)` and Eastmoney fallback.
+- `CN.SHFE.au`: commodity option table via `option_commodity_contract_table_sina`, plus contract-list diagnostics via `option_commodity_contract_sina`.
+
+The AKShare probe now checks Eastmoney risk/value/current option endpoints, SSE risk indicators, Sina ETF Greeks, commodity option tables, `option_comm_info`, and `option_margin`. It prints a field matrix for contract code, underlying, expiry, strike, option type, OI, price, IV, Delta, Gamma, Vega, Theta, multiplier, and underlying price so unstable source schemas are visible before collection.
+
+Important current limitation: AKShare raw option boards often provide quote, open interest, and contract names, but not normalized expiry dates, IV/Greeks, contract multipliers, or underlying prices in one stable endpoint. The collector stores raw rows and source-level warnings, but GEX charts only appear after rows include a real gamma path: either a positive raw `gamma`, or positive IV plus a supported model (`blackScholes` for index/ETF-style options, `black76` for futures options), contract multiplier, expiry, underlying price, OI, strike, and option type. Missing values are skipped and surfaced in Data Health; the UI does not synthesize fake TradFi GEX or fake history.
+
+When historical snapshots are insufficient, History and heatmap views show:
+
+```text
+Not enough real snapshots yet. Keep the collector running.
+```
+
+Use interval collection to build TradFi history forward from now; this version does not promise five-year historical option-chain reconstruction from AKShare.
 
 ## GitHub Backup Workflow
 

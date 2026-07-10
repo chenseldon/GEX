@@ -9,6 +9,8 @@ const renderedSurface = `${html}\n${app}`;
 test("V2 shell exposes GammaFlip-style advanced studio controls", () => {
   [
     'rel="icon"',
+    'id="marketClassTabs"',
+    'data-market-class="tradfi"',
     'id="ctxTrigger"',
     'id="ctxModal"',
     'id="reachPanel"',
@@ -96,6 +98,33 @@ test("Live snapshot resumes after history, symbol, and expiry changes", () => {
   ].forEach((needle) => {
     assert.match(app, new RegExp(escapeRegExp(needle)));
   });
+});
+
+test("TradFi selector is enabled and keeps real-data empty states explicit", () => {
+  [
+    'data-market-class="crypto"',
+    'data-market-class="tradfi"',
+    'id="ctxExchangeList"',
+    'marketClass: "crypto"',
+    "function switchMarketClass(marketClass)",
+    "function currentMarketInstruments()",
+    "function renderContextExchangeList(instrument)",
+    "function renderContextExpiryList(instrument)",
+    "function instrumentHasGexData(instrument)",
+    "instrumentMarket(instrument) === state.marketClass",
+    "No TradFi data",
+    "Run the collector to populate this group.",
+    "Run AKShare collector",
+    "Connector required",
+    "Needs collector",
+    "Unsupported",
+    "Not enough real snapshots yet",
+    "collect:akshare",
+  ].forEach((needle) => {
+    assert.match(renderedSurface, new RegExp(escapeRegExp(needle)));
+  });
+
+  assert.doesNotMatch(renderedSurface, /data-market-class="tradfi"[^>]*disabled/);
 });
 
 test("V2 shell mirrors observed GammaFlip picker and reach vocabulary", () => {

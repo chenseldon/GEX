@@ -305,6 +305,526 @@ test("DuckDB schema includes historical research tables", async () => {
   }
 });
 
+test("DuckDB schema includes generic TradFi tables", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-duckdb-tradfi-schema-"));
+  const dbPath = join(dir, "gex.duckdb");
+
+  try {
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    const tables = await repo.getTableNames();
+
+    assert.equal(tables.includes("tradfi_source_runs"), true);
+    assert.equal(tables.includes("tradfi_instruments"), true);
+    assert.equal(tables.includes("tradfi_option_tickers"), true);
+    assert.equal(tables.includes("tradfi_underlying_prices"), true);
+    await repo.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("DuckDB repository stores TradFi snapshots and updates health counts", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-duckdb-tradfi-health-"));
+  const dbPath = join(dir, "gex.duckdb");
+
+  try {
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    await repo.insertTradFiSnapshot({
+      sourceName: "akshare",
+      observedAt,
+      requestedSymbols: ["CN.CFFEX.IF"],
+      status: "ok",
+      warnings: ["raw board lacks expiry and multiplier"],
+      snapshots: [
+        {
+          symbol: "CN.CFFEX.IF",
+          status: "ok",
+          rawRows: [
+            {
+              interface: "option_finance_board",
+              role: "option_board",
+              rows: [{ instrument: "IF2407-C-3600", position: 12 }],
+            },
+          ],
+          rowCount: 1,
+        },
+      ],
+    });
+
+    const health = await repo.getHealth();
+    const symbols = await repo.getTradFiAvailableSymbols();
+    const latest = await repo.getLatestTradFiOptionChain("CN.CFFEX.IF");
+
+    assert.equal(health.akshare.lastStatus, "ok");
+    assert.equal(health.akshare.sourceRuns, 1);
+    assert.equal(health.akshare.rawSnapshots, 1);
+    assert.equal(health.akshare.contracts, 0);
+    assert.equal(health.akshare.skippedContracts, 0);
+    assert.deepEqual(health.akshare.warnings, ["raw board lacks expiry and multiplier"]);
+    assert.deepEqual(symbols, [
+      {
+        symbol: "CN.CFFEX.IF",
+        lastSnapshotAt: observedAt,
+        tickerCount: 0,
+        contractCount: 0,
+        status: "ok",
+      },
+    ]);
+    assert.equal(latest, null);
+    await repo.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("DuckDB repository returns latest TradFi option chain for GEX-ready contracts", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-duckdb-tradfi-chain-"));
+  const dbPath = join(dir, "gex.duckdb");
+  const contractAsOf = "2026-07-06T07:59:00.000Z";
+
+  try {
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    const contract = tradFiContract("IF2407-C-3600", "call", 3600);
+    contract.asOf = contractAsOf;
+    await repo.insertTradFiSnapshot({
+      sourceName: "akshare",
+      observedAt,
+      requestedSymbols: ["CN.CFFEX.IF"],
+      status: "ok",
+      snapshots: [
+        {
+          symbol: "CN.CFFEX.IF",
+          status: "ok",
+          underlyingPrice: 3650,
+          contracts: [
+            contract,
+            tradFiContract("IF2407-P-3600", "put", 3600),
+          ],
+        },
+      ],
+      warnings: [],
+    });
+
+    const latest = await repo.getLatestTradFiOptionChain("CN.CFFEX.IF");
+
+    assert.equal(latest.symbol, "CN.CFFEX.IF");
+    assert.equal(latest.spotPrice, 3650);
+    assert.equal(latest.asOf, observedAt);
+    assert.equal(latest.contracts.length, 2);
+    assert.equal(latest.contracts[0].instrumentName, "IF2407-C-3600");
+    assert.equal(latest.contracts[0].contractMultiplier, 300);
+    assert.equal(latest.contracts[0].gamma, 0.00012);
+    assert.equal(latest.contracts[0].impliedVolatility, 0.18);
+    await repo.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("DuckDB repository stores TradFi contracts with real gamma but no IV", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-duckdb-tradfi-gamma-only-"));
+  const dbPath = join(dir, "gex.duckdb");
+
+  try {
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    const gammaOnlyContract = tradFiContract("IF2407-C-3600", "call", 3600);
+    delete gammaOnlyContract.impliedVolatility;
+
+    await repo.insertTradFiSnapshot({
+      sourceName: "akshare",
+      observedAt,
+      requestedSymbols: ["CN.CFFEX.IF"],
+      status: "partial",
+      snapshots: [
+        {
+          symbol: "CN.CFFEX.IF",
+          status: "partial",
+          contracts: [gammaOnlyContract],
+        },
+      ],
+      warnings: [],
+    });
+
+    const latest = await repo.getLatestTradFiOptionChain("CN.CFFEX.IF");
+    const health = await repo.getHealth();
+
+    assert.equal(latest.contracts.length, 1);
+    assert.equal(latest.contracts[0].gamma, 0.00012);
+    assert.equal(latest.contracts[0].impliedVolatility, null);
+    assert.equal(health.akshare.contracts, 1);
+    assert.equal(health.akshare.skippedContracts, 0);
+    assert.equal(health.akshare.missingIv, 0);
+    assert.equal(health.akshare.missingGamma, 0);
+    await repo.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("DuckDB repository skips incomplete TradFi contracts with health counters", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-duckdb-tradfi-skip-"));
+  const dbPath = join(dir, "gex.duckdb");
+
+  try {
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    await repo.insertTradFiSnapshot({
+      sourceName: "akshare",
+      observedAt,
+      requestedSymbols: ["CN.CFFEX.IF"],
+      status: "partial",
+      snapshots: [
+        {
+          symbol: "CN.CFFEX.IF",
+          status: "partial",
+          contracts: [
+            {
+              symbol: "CN.CFFEX.IF",
+              instrumentName: "IF2407-C-3600",
+              strike: 3600,
+              optionType: "call",
+              underlyingPrice: 3650,
+              markPrice: 120,
+            },
+          ],
+        },
+      ],
+      warnings: [],
+    });
+
+    const latest = await repo.getLatestTradFiOptionChain("CN.CFFEX.IF");
+    const health = await repo.getHealth();
+
+    assert.equal(latest, null);
+    assert.equal(health.akshare.lastStatus, "partial");
+    assert.equal(health.akshare.contracts, 0);
+    assert.equal(health.akshare.skippedContracts, 1);
+    assert.equal(health.akshare.missingIv, 1);
+    assert.equal(health.akshare.missingOi, 1);
+    assert.equal(health.akshare.missingMultiplier, 1);
+    assert.equal(health.akshare.missingExpiry, 1);
+    assert.match(health.akshare.warnings[0], /missing/);
+    await repo.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("DuckDB repository counts AKShare normalization skips in data health", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-duckdb-tradfi-normalized-skip-"));
+  const dbPath = join(dir, "gex.duckdb");
+
+  try {
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    await repo.insertTradFiSnapshot({
+      sourceName: "akshare",
+      observedAt,
+      requestedSymbols: ["CN.SHFE.au"],
+      status: "partial",
+      snapshots: [
+        {
+          symbol: "CN.SHFE.au",
+          venue: "SHFE",
+          region: "CN",
+          status: "partial",
+          normalized: {
+            contracts: [],
+            skippedRows: [
+              {
+                instrumentName: "au2608C1000",
+                reason: "missing implied volatility or gamma; missing expiry",
+              },
+            ],
+            warnings: {
+              missingIv: 1,
+              missingOi: 0,
+              missingMultiplier: 1,
+              missingUnderlyingPrice: 1,
+              skippedContracts: 1,
+            },
+          },
+        },
+      ],
+      warnings: [],
+    });
+
+    const health = await repo.getHealth();
+
+    assert.equal(health.akshare.contracts, 0);
+    assert.equal(health.akshare.skippedContracts, 1);
+    assert.equal(health.akshare.missingIv, 1);
+    assert.equal(health.akshare.missingGamma, 1);
+    assert.equal(health.akshare.missingMultiplier, 1);
+    assert.equal(health.akshare.missingUnderlyingPrice, 1);
+    assert.equal(health.akshare.missingExpiry, 1);
+    await repo.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("DuckDB repository does not serve stale TradFi chain after later raw-only snapshot", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-duckdb-tradfi-stale-"));
+  const dbPath = join(dir, "gex.duckdb");
+  const laterObservedAt = "2026-07-06T09:00:00.000Z";
+
+  try {
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    await repo.insertTradFiSnapshot({
+      sourceName: "akshare",
+      observedAt,
+      requestedSymbols: ["CN.CFFEX.IF"],
+      status: "ok",
+      snapshots: [
+        {
+          symbol: "CN.CFFEX.IF",
+          status: "ok",
+          underlyingPrice: 3650,
+          contracts: [tradFiContract("IF2407-C-3600", "call", 3600)],
+        },
+      ],
+      warnings: [],
+    });
+    await repo.insertTradFiSnapshot({
+      sourceName: "akshare",
+      observedAt: laterObservedAt,
+      requestedSymbols: ["CN.CFFEX.IF"],
+      status: "ok",
+      snapshots: [
+        {
+          symbol: "CN.CFFEX.IF",
+          status: "ok",
+          rawRows: [
+            {
+              interface: "option_finance_board",
+              role: "option_board",
+              rows: [{ instrument: "IF2407-C-3600", position: 12 }],
+            },
+          ],
+          rowCount: 1,
+        },
+      ],
+      warnings: ["latest raw snapshot has no GEX-ready contracts"],
+    });
+
+    const latest = await repo.getLatestTradFiOptionChain("CN.CFFEX.IF");
+    const symbols = await repo.getTradFiAvailableSymbols();
+
+    assert.equal(latest, null);
+    assert.deepEqual(symbols, [
+      {
+        symbol: "CN.CFFEX.IF",
+        lastSnapshotAt: laterObservedAt,
+        tickerCount: 0,
+        contractCount: 0,
+        status: "ok",
+      },
+    ]);
+    await repo.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("DuckDB repository does not serve stale TradFi chain after later empty requested run", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-duckdb-tradfi-empty-run-"));
+  const dbPath = join(dir, "gex.duckdb");
+  const laterObservedAt = "2026-07-06T10:00:00.000Z";
+
+  try {
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    await repo.insertTradFiSnapshot({
+      sourceName: "akshare",
+      observedAt,
+      requestedSymbols: ["CN.CFFEX.IF"],
+      status: "ok",
+      snapshots: [
+        {
+          symbol: "CN.CFFEX.IF",
+          status: "ok",
+          underlyingPrice: 3650,
+          contracts: [tradFiContract("IF2407-C-3600", "call", 3600)],
+        },
+      ],
+      warnings: [],
+    });
+    await repo.insertTradFiSnapshot({
+      sourceName: "akshare",
+      observedAt: laterObservedAt,
+      requestedSymbols: ["CN.CFFEX.IF"],
+      status: "unavailable",
+      snapshots: [],
+      warnings: ["AKShare returned no snapshots"],
+    });
+
+    const latest = await repo.getLatestTradFiOptionChain("CN.CFFEX.IF");
+    const symbols = await repo.getTradFiAvailableSymbols();
+
+    assert.equal(latest, null);
+    assert.deepEqual(symbols, [
+      {
+        symbol: "CN.CFFEX.IF",
+        lastSnapshotAt: laterObservedAt,
+        tickerCount: 0,
+        contractCount: 0,
+        status: "unavailable",
+      },
+    ]);
+    await repo.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("DuckDB repository does not serve stale TradFi chain after same-time empty requested run", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-duckdb-tradfi-same-time-empty-run-"));
+  const dbPath = join(dir, "gex.duckdb");
+
+  try {
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    await repo.insertTradFiSnapshot({
+      sourceName: "akshare",
+      observedAt,
+      requestedSymbols: ["CN.CFFEX.IF"],
+      status: "ok",
+      snapshots: [
+        {
+          symbol: "CN.CFFEX.IF",
+          status: "ok",
+          underlyingPrice: 3650,
+          contracts: [tradFiContract("IF2407-C-3600", "call", 3600)],
+        },
+      ],
+      warnings: [],
+    });
+    await repo.insertTradFiSnapshot({
+      sourceName: "akshare",
+      observedAt,
+      requestedSymbols: ["CN.CFFEX.IF"],
+      status: "unavailable",
+      snapshots: [],
+      warnings: ["AKShare returned no snapshots"],
+    });
+
+    const latest = await repo.getLatestTradFiOptionChain("CN.CFFEX.IF");
+    const symbols = await repo.getTradFiAvailableSymbols();
+
+    assert.equal(latest, null);
+    assert.deepEqual(symbols, [
+      {
+        symbol: "CN.CFFEX.IF",
+        lastSnapshotAt: observedAt,
+        tickerCount: 0,
+        contractCount: 0,
+        status: "unavailable",
+      },
+    ]);
+    await repo.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("DuckDB repository chooses latest TradFi source run even when observedAt moves backward", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-duckdb-tradfi-backward-time-empty-run-"));
+  const dbPath = join(dir, "gex.duckdb");
+  const earlierObservedAt = "2026-07-06T07:30:00.000Z";
+
+  try {
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    await repo.insertTradFiSnapshot({
+      sourceName: "akshare",
+      observedAt,
+      requestedSymbols: ["CN.CFFEX.IF"],
+      status: "ok",
+      snapshots: [
+        {
+          symbol: "CN.CFFEX.IF",
+          status: "ok",
+          underlyingPrice: 3650,
+          contracts: [tradFiContract("IF2407-C-3600", "call", 3600)],
+        },
+      ],
+      warnings: [],
+    });
+    await repo.insertTradFiSnapshot({
+      sourceName: "akshare",
+      observedAt: earlierObservedAt,
+      requestedSymbols: ["CN.CFFEX.IF"],
+      status: "unavailable",
+      snapshots: [],
+      warnings: ["AKShare returned an older unavailable source run"],
+    });
+
+    const latest = await repo.getLatestTradFiOptionChain("CN.CFFEX.IF");
+    const symbols = await repo.getTradFiAvailableSymbols();
+
+    assert.equal(latest, null);
+    assert.deepEqual(symbols, [
+      {
+        symbol: "CN.CFFEX.IF",
+        lastSnapshotAt: earlierObservedAt,
+        tickerCount: 0,
+        contractCount: 0,
+        status: "unavailable",
+      },
+    ]);
+    await repo.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("DuckDB repository stores TradFi contracts with IV for model-derived gamma", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-duckdb-tradfi-iv-only-"));
+  const dbPath = join(dir, "gex.duckdb");
+
+  try {
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    const ivOnlyContract = tradFiContract("IF2407-C-3600", "call", 3600);
+    delete ivOnlyContract.gamma;
+
+    await repo.insertTradFiSnapshot({
+      sourceName: "akshare",
+      observedAt,
+      requestedSymbols: ["CN.CFFEX.IF"],
+      status: "partial",
+      snapshots: [
+        {
+          symbol: "CN.CFFEX.IF",
+          status: "partial",
+          contracts: [ivOnlyContract],
+        },
+      ],
+      warnings: [],
+    });
+
+    const latest = await repo.getLatestTradFiOptionChain("CN.CFFEX.IF");
+    const health = await repo.getHealth();
+
+    assert.equal(latest.contracts.length, 1);
+    assert.equal(latest.contracts[0].impliedVolatility, 0.18);
+    assert.equal(latest.contracts[0].gamma, null);
+    assert.equal(health.akshare.contracts, 1);
+    assert.equal(health.akshare.skippedContracts, 0);
+    assert.equal(health.akshare.missingGamma, 0);
+    assert.equal(health.akshare.missingIv, 0);
+    await repo.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("API auto source uses DuckDB latest Deribit snapshot when available", async () => {
   const dir = await mkdtemp(join(tmpdir(), "gex-api-duckdb-"));
   const dbPath = join(dir, "gex.duckdb");
@@ -431,6 +951,178 @@ test("API default source prefers DuckDB latest Deribit snapshot", async () => {
   }
 });
 
+test("API auto source exposes TradFi instruments when AKShare DuckDB data exists", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-api-tradfi-instruments-"));
+  const dbPath = join(dir, "gex.duckdb");
+  const previousSource = process.env.DATA_SOURCE;
+  const previousDbPath = process.env.GEX_DB_PATH;
+  const previousRealtime = process.env.DERIBIT_REALTIME;
+
+  try {
+    process.env.DATA_SOURCE = "auto";
+    process.env.DERIBIT_REALTIME = "0";
+    process.env.GEX_DB_PATH = dbPath;
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    await repo.insertTradFiSnapshot({
+      sourceName: "akshare",
+      observedAt,
+      requestedSymbols: ["CN.SHFE.au"],
+      status: "ok",
+      snapshots: [
+        {
+          symbol: "CN.SHFE.au",
+          status: "ok",
+          underlyingPrice: 620,
+          contracts: [tradFiContractForSymbol("CN.SHFE.au", "au2607C600", "call", 600)],
+        },
+      ],
+      warnings: [],
+    });
+    await repo.close();
+
+    const handler = createApiHandler();
+    const response = await handler(new Request("http://localhost/api/instruments"));
+    const payload = await response.json();
+    const tradfi = payload.instruments.find((item) => item.symbol === "CN.SHFE.au");
+
+    assert.equal(response.status, 200);
+    assert.equal(tradfi.group, "China Commodity Options");
+    assert.equal(tradfi.market, "tradfi");
+    assert.equal(tradfi.status, "available");
+    assert.equal(tradfi.dataStatus, "available");
+    assert.deepEqual(tradfi.exchanges, ["SHFE"]);
+  } finally {
+    if (previousSource === undefined) delete process.env.DATA_SOURCE;
+    else process.env.DATA_SOURCE = previousSource;
+    if (previousDbPath === undefined) delete process.env.GEX_DB_PATH;
+    else process.env.GEX_DB_PATH = previousDbPath;
+    if (previousRealtime === undefined) delete process.env.DERIBIT_REALTIME;
+    else process.env.DERIBIT_REALTIME = previousRealtime;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("API auto source includes TradFi catalog entries before collectors populate data", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-api-tradfi-catalog-"));
+  const dbPath = join(dir, "gex.duckdb");
+  const previousSource = process.env.DATA_SOURCE;
+  const previousDbPath = process.env.GEX_DB_PATH;
+  const previousRealtime = process.env.DERIBIT_REALTIME;
+
+  try {
+    process.env.DATA_SOURCE = "auto";
+    process.env.DERIBIT_REALTIME = "0";
+    process.env.GEX_DB_PATH = dbPath;
+
+    const handler = createApiHandler();
+    const response = await handler(new Request("http://localhost/api/instruments"));
+    const payload = await response.json();
+    const bySymbol = new Map(payload.instruments.map((item) => [item.symbol, item]));
+
+    assert.equal(response.status, 200);
+    assert.equal(bySymbol.get("CN.CFFEX.IF").group, "China Index/ETF Options");
+    assert.deepEqual(bySymbol.get("CN.CFFEX.IF").exchanges, ["CFFEX"]);
+    assert.equal(bySymbol.get("CN.CFFEX.IF").dataStatus, "needs_collector");
+    assert.equal(bySymbol.get("CN.SHFE.au").group, "China Commodity Options");
+    assert.deepEqual(bySymbol.get("CN.SHFE.au").exchanges, ["SHFE"]);
+    assert.equal(bySymbol.get("US.CBOE.SPX").dataStatus, "unsupported");
+    assert.deepEqual(bySymbol.get("US.CME.GC").exchanges, ["CME", "COMEX"]);
+    assert.deepEqual(bySymbol.get("US.NYMEX.CL").exchanges, ["NYMEX", "CME"]);
+  } finally {
+    if (previousSource === undefined) delete process.env.DATA_SOURCE;
+    else process.env.DATA_SOURCE = previousSource;
+    if (previousDbPath === undefined) delete process.env.GEX_DB_PATH;
+    else process.env.GEX_DB_PATH = previousDbPath;
+    if (previousRealtime === undefined) delete process.env.DERIBIT_REALTIME;
+    else process.env.DERIBIT_REALTIME = previousRealtime;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("API akshare source serves TradFi Studio from DuckDB without fake history", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-api-tradfi-studio-"));
+  const dbPath = join(dir, "gex.duckdb");
+  const previousSource = process.env.DATA_SOURCE;
+  const previousDbPath = process.env.GEX_DB_PATH;
+
+  try {
+    process.env.DATA_SOURCE = "akshare";
+    process.env.GEX_DB_PATH = dbPath;
+    await initializeDuckDb({ dbPath });
+    const repo = await createDuckDbRepository({ dbPath });
+    await repo.insertTradFiSnapshot({
+      sourceName: "akshare",
+      observedAt,
+      requestedSymbols: ["CN.SHFE.au"],
+      status: "ok",
+      snapshots: [
+        {
+          symbol: "CN.SHFE.au",
+          status: "ok",
+          underlyingPrice: 620,
+          contracts: [
+            tradFiContractForSymbol("CN.SHFE.au", "au2607C600", "call", 600),
+            tradFiContractForSymbol("CN.SHFE.au", "au2607P600", "put", 600),
+            tradFiContractForSymbol("CN.SHFE.au", "au2607C640", "call", 640),
+          ],
+        },
+      ],
+      warnings: [],
+    });
+    await repo.close();
+
+    const handler = createApiHandler();
+    const studioResponse = await handler(new Request("http://localhost/api/gex/studio?symbol=CN.SHFE.au"));
+    const studio = await studioResponse.json();
+    const heatmapResponse = await handler(new Request("http://localhost/api/gex/heatmap?symbol=CN.SHFE.au&type=net"));
+    const heatmap = await heatmapResponse.json();
+
+    assert.equal(studioResponse.status, 200);
+    assert.equal(studio.symbol, "CN.SHFE.au");
+    assert.equal(studio.sourceLabel, "AKShare");
+    assert.equal(studio.spotPrice, 620);
+    assert.equal(studio.rows.length > 0, true);
+    assert.equal(heatmapResponse.status, 200);
+    assert.equal(heatmap.status, "accumulating");
+    assert.equal(heatmap.rows.length, 0);
+    assert.match(heatmap.warning, /AKShare snapshots/);
+  } finally {
+    if (previousSource === undefined) delete process.env.DATA_SOURCE;
+    else process.env.DATA_SOURCE = previousSource;
+    if (previousDbPath === undefined) delete process.env.GEX_DB_PATH;
+    else process.env.GEX_DB_PATH = previousDbPath;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("API akshare source returns structured unavailable for unsupported TradFi symbol", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gex-api-tradfi-unsupported-"));
+  const dbPath = join(dir, "gex.duckdb");
+  const previousSource = process.env.DATA_SOURCE;
+  const previousDbPath = process.env.GEX_DB_PATH;
+
+  try {
+    process.env.DATA_SOURCE = "akshare";
+    process.env.GEX_DB_PATH = dbPath;
+    await initializeDuckDb({ dbPath });
+
+    const handler = createApiHandler();
+    const response = await handler(new Request("http://localhost/api/gex/studio?symbol=US.CME.ES"));
+    const payload = await response.json();
+
+    assert.equal(response.status, 400);
+    assert.equal(payload.status, "unavailable");
+    assert.match(payload.error, /AKShare data unavailable/);
+  } finally {
+    if (previousSource === undefined) delete process.env.DATA_SOURCE;
+    else process.env.DATA_SOURCE = previousSource;
+    if (previousDbPath === undefined) delete process.env.GEX_DB_PATH;
+    else process.env.GEX_DB_PATH = previousDbPath;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("live Deribit snapshot uses book summary payload without DuckDB writes", async () => {
   const client = {
     async getBookSummaryByCurrency(symbol, kind) {
@@ -526,5 +1218,46 @@ function bookSummary(instrumentName, underlyingPrice, markIv, openInterest) {
     best_ask_price: 0.06,
     last_price: 0.05,
     volume: 10,
+  };
+}
+
+function tradFiContract(instrumentName, optionType, strike) {
+  return {
+    symbol: "CN.CFFEX.IF",
+    venue: "CFFEX",
+    region: "CN",
+    underlying: "IF",
+    instrumentName,
+    expiry: "2026-07-17",
+    strike,
+    optionType,
+    openInterest: 10,
+    impliedVolatility: 0.18,
+    gamma: 0.00012,
+    contractMultiplier: 300,
+    underlyingPrice: 3650,
+    asOf: observedAt,
+    sourceName: "akshare",
+    model: "blackScholes",
+    riskFreeRate: 0.02,
+    volume: 5,
+    markPrice: 120,
+  };
+}
+
+function tradFiContractForSymbol(symbol, instrumentName, optionType, strike) {
+  const contract = tradFiContract(instrumentName, optionType, strike);
+  const [, venue, underlying] = symbol.split(".");
+  return {
+    ...contract,
+    symbol,
+    venue,
+    underlying,
+    instrumentName,
+    strike,
+    optionType,
+    underlyingPrice: 620,
+    contractMultiplier: 1000,
+    markPrice: 12,
   };
 }

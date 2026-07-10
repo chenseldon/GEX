@@ -1,6 +1,7 @@
 const state = {
   page: "studio",
   symbol: "BTC",
+  marketClass: "crypto",
   expiry: "",
   mode: "snapshot",
   category: "now",
@@ -68,7 +69,10 @@ const els = {
   ctxPillSymbol: document.querySelector("#ctxPillSymbol"),
   ctxPillMeta: document.querySelector("#ctxPillMeta"),
   ctxModal: document.querySelector("#ctxModal"),
+  marketClassTabs: document.querySelector("#marketClassTabs"),
+  ctxMarketClassTabs: document.querySelector("#ctxModal .segmented.compact"),
   ctxAssetList: document.querySelector("#ctxAssetList"),
+  ctxExchangeList: document.querySelector("#ctxExchangeList"),
   ctxExpiryList: document.querySelector("#ctxExpiryList"),
   primaryNav: document.querySelector(".primary-nav"),
   symbolTabs: document.querySelector("#symbolTabs"),
@@ -150,7 +154,9 @@ init().catch(renderError);
 async function init() {
   const { instruments } = await api("/api/instruments");
   state.instruments = instruments;
+  ensureSelectedInstrument();
   bindEvents();
+  renderMarketTabs();
   renderSymbolTabs();
   await loadData();
   startRefreshClock();
@@ -175,6 +181,13 @@ function bindEvents() {
 
   els.refreshButton.addEventListener("click", () => loadData().catch(renderError));
   els.ctxTrigger.addEventListener("click", () => openModal(els.ctxModal));
+  [els.marketClassTabs, els.ctxMarketClassTabs].forEach((group) => {
+    group?.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-market-class]");
+      if (!button) return;
+      await switchMarketClass(button.dataset.marketClass);
+    });
+  });
   els.productSwitchButton.addEventListener("click", () => toggleHidden(els.productMenu));
   els.dashboardCsvButton.addEventListener("click", () => exportCsv(state.dashboard?.rows ?? []));
   els.studioCsvButton.addEventListener("click", () => exportCsv(state.studio?.rows ?? []));
@@ -420,6 +433,68 @@ function activateLiveSnapshot() {
   renderLiveState();
 }
 
+function ensureSelectedInstrument() {
+  const current = state.instruments.find((instrument) => instrument.symbol === state.symbol);
+  if (current) {
+    state.marketClass = instrumentMarket(current);
+    return;
+  }
+  const first = state.instruments[0];
+  if (first) {
+    state.symbol = first.symbol;
+    state.marketClass = instrumentMarket(first);
+  }
+}
+
+async function switchMarketClass(marketClass) {
+  if (!["crypto", "tradfi"].includes(marketClass)) return;
+  state.marketClass = marketClass;
+  const instruments = currentMarketInstruments();
+  if (instruments.length > 0 && !instruments.some((instrument) => instrument.symbol === state.symbol)) {
+    state.symbol = (instruments.find(instrumentHasGexData) ?? instruments[0]).symbol;
+    state.expiry = "";
+    activateLiveSnapshot();
+  }
+  renderMarketTabs();
+  renderSymbolTabs();
+  renderContextPicker();
+  if (instruments.length === 0) {
+    return;
+  }
+  if (instrumentHasGexData(selectedInstrument())) {
+    await loadData();
+  }
+}
+
+function instrumentMarket(instrument) {
+  return instrument?.market === "tradfi" || String(instrument?.symbol ?? "").includes(".")
+    ? "tradfi"
+    : "crypto";
+}
+
+function currentMarketInstruments() {
+  return state.instruments.filter((instrument) => instrumentMarket(instrument) === state.marketClass);
+}
+
+function selectedInstrument() {
+  return state.instruments.find((instrument) => instrument.symbol === state.symbol) ?? null;
+}
+
+function instrumentHasGexData(instrument) {
+  if (!instrument) return false;
+  if (instrumentMarket(instrument) === "crypto") return true;
+  return instrument.dataStatus === "available"
+    || instrument.status === "available"
+    || Number(instrument.contractCount ?? instrument.tickerCount ?? 0) > 0;
+}
+
+function tradFiStatusText(instrument) {
+  if (instrumentHasGexData(instrument)) return "Live DuckDB";
+  if (instrument?.dataStatus === "unsupported" || instrument?.status === "unsupported") return "Unsupported";
+  if (instrument?.supportStatus === "planned") return "Connector planned";
+  return "Needs collector";
+}
+
 async function loadData() {
   if (loadingData) {
     queuedLoadData = true;
@@ -464,6 +539,7 @@ async function loadHistoryHeatmap() {
 }
 
 function renderAll() {
+  renderMarketTabs();
   renderSymbolTabs();
   renderContextPicker();
   renderExpirySelect();
@@ -478,20 +554,42 @@ function renderAll() {
   setPage(state.page);
 }
 
+function renderMarketTabs() {
+  [els.marketClassTabs, els.ctxMarketClassTabs].forEach((group) => {
+    group?.querySelectorAll("[data-market-class]").forEach((button) => {
+      button.classList.toggle("active", button.dataset.marketClass === state.marketClass);
+    });
+  });
+}
+
 function renderSymbolTabs() {
+  const instruments = currentMarketInstruments();
+  if (instruments.length === 0) {
+    const empty = document.createElement("button");
+    empty.type = "button";
+    empty.disabled = true;
+    empty.textContent = state.marketClass === "tradfi" ? "No TradFi data" : "No Crypto data";
+    els.symbolTabs.replaceChildren(empty);
+    return;
+  }
   els.symbolTabs.replaceChildren(
-    ...state.instruments.map((instrument) => {
+    ...instruments.map((instrument) => {
       const button = document.createElement("button");
       button.type = "button";
       button.textContent = instrument.symbol;
       button.className = instrument.symbol === state.symbol ? "active" : "";
-      button.title = instrument.name;
+      button.title = instrumentMarket(instrument) === "tradfi"
+        ? `${instrument.name} · ${tradFiStatusText(instrument)}`
+        : instrument.name;
       button.addEventListener("click", async () => {
         state.symbol = instrument.symbol;
         state.expiry = "";
         activateLiveSnapshot();
         renderSymbolTabs();
-        await loadData();
+        renderContextPicker();
+        if (instrumentHasGexData(instrument)) {
+          await loadData();
+        }
       });
       return button;
     }),
@@ -499,28 +597,78 @@ function renderSymbolTabs() {
 }
 
 function renderContextPicker() {
+  const instruments = currentMarketInstruments();
+  const current = selectedInstrument();
   els.ctxPillSymbol.textContent = state.symbol;
   els.ctxPillMeta.textContent = `${state.expiry ? formatExpiryCode(state.expiry) : "All"} · TOTAL`;
-  els.ctxAssetList.replaceChildren(
-    ...state.instruments.map((instrument) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.innerHTML = `<span class="asset-logo">${assetIcon(instrument.symbol)}</span><strong>${instrument.symbol}</strong><small>${instrument.name}</small>`;
-      button.className = instrument.symbol === state.symbol ? "active" : "";
-      button.addEventListener("click", async () => {
-        state.symbol = instrument.symbol;
-        state.expiry = "";
-        activateLiveSnapshot();
-        els.ctxModal.hidden = true;
-        await loadData();
-      });
-      return button;
-    }),
+  if (instruments.length === 0) {
+    const empty = document.createElement("button");
+    empty.type = "button";
+    empty.disabled = true;
+    empty.innerHTML = `<strong>${state.marketClass === "tradfi" ? "No TradFi data" : "No Crypto data"}</strong><small>Run the collector to populate this group.</small>`;
+    els.ctxAssetList.replaceChildren(empty);
+  } else {
+    els.ctxAssetList.replaceChildren(
+      ...instruments.map((instrument) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        const status = instrumentMarket(instrument) === "tradfi" ? ` - ${tradFiStatusText(instrument)}` : "";
+        button.innerHTML = `<span class="asset-logo">${assetIcon(instrument.symbol)}</span><strong>${instrument.symbol}</strong><small>${instrument.name}${status}</small>`;
+        button.className = instrument.symbol === state.symbol ? "active" : "";
+        button.addEventListener("click", async () => {
+          state.symbol = instrument.symbol;
+          state.expiry = "";
+          activateLiveSnapshot();
+          renderSymbolTabs();
+          renderContextPicker();
+          if (instrumentHasGexData(instrument)) {
+            els.ctxModal.hidden = true;
+            await loadData();
+          }
+        });
+        return button;
+      }),
+    );
+  }
+  renderContextExchangeList(current);
+  renderContextExpiryList(current);
+}
+
+function renderContextExchangeList(instrument) {
+  const market = instrumentMarket(instrument);
+  const exchanges = market === "tradfi"
+    ? (instrument?.exchanges?.length ? instrument.exchanges : [instrument?.venue ?? "TradFi"])
+    : ["Deribit", "Bybit", "OKX"];
+  els.ctxExchangeList.replaceChildren(
+    contextInfoButton("All venues", "", true),
+    ...exchanges.map((exchange) => contextInfoButton(exchange, market === "tradfi" ? instrument?.group ?? "" : "Crypto options")),
   );
+}
+
+function renderContextExpiryList(instrument) {
+  if (instrumentHasGexData(instrument)) {
+    els.ctxExpiryList.replaceChildren(
+      contextExpiryButton("", { label: "TOTAL", gex: state.dashboard.expiries.reduce((sum, row) => sum + Math.abs(row.gex), 0) }),
+      ...state.dashboard.expiries.map((row) => contextExpiryButton(row.expiry, row)),
+    );
+    return;
+  }
+
+  const message = instrument?.dataStatus === "unsupported" || instrument?.status === "unsupported"
+    ? "Connector required"
+    : "Run AKShare collector";
   els.ctxExpiryList.replaceChildren(
-    contextExpiryButton("", { label: "TOTAL", gex: state.dashboard.expiries.reduce((sum, row) => sum + Math.abs(row.gex), 0) }),
-    ...state.dashboard.expiries.map((row) => contextExpiryButton(row.expiry, row)),
+    contextInfoButton("No real expiries", message, true, true),
   );
+}
+
+function contextInfoButton(labelText, detailText = "", active = false, disabled = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = active ? "active" : "";
+  button.disabled = disabled;
+  button.innerHTML = `<strong>${labelText}</strong>${detailText ? `<small>${detailText}</small>` : ""}`;
+  return button;
 }
 
 function renderExpirySelect() {
@@ -800,7 +948,7 @@ function emptyPanel(title, message) {
 function renderTrends(trends) {
   const points = Array.isArray(trends) ? trends : trends?.points;
   if (!points?.length) {
-    els.trendGrid.replaceChildren(emptyPanel("24 hour GEX trends", "Not enough real Deribit snapshots yet. Keep the collector running."));
+    els.trendGrid.replaceChildren(emptyPanel("24 hour GEX trends", "Not enough real snapshots yet. Keep the collector running."));
     return;
   }
   const warning = trends?.warning ? [emptyPanel("24 hour GEX trends", trends.warning)] : [];
@@ -830,7 +978,7 @@ function renderHeatmap(container, heatmap) {
     container.style.removeProperty("--heatmap-cols");
     const empty = document.createElement("div");
     empty.className = "data-warning";
-    empty.textContent = heatmap?.warning ?? "Not enough real Deribit snapshots yet.";
+    empty.textContent = heatmap?.warning ?? "Not enough real snapshots yet.";
     container.append(empty);
     return;
   }
@@ -1275,7 +1423,7 @@ function historyHeatmapData(windowKey, gexType) {
   }
   return {
     status: "accumulating",
-    warning: state.historyHeatmap?.warning ?? "Not enough real Deribit snapshots yet. Keep the collector running to build this history view.",
+    warning: state.historyHeatmap?.warning ?? "Not enough real snapshots yet. Keep the collector running to build this history view.",
     rangeLabel: "Not enough historical snapshots",
     gexType,
     columns: 0,
@@ -1554,7 +1702,7 @@ function renderHistoryHeatmapChart(svg, data) {
     rect(svg, 70, 58, width - 140, height - 160, "rgba(20, 33, 44, 0.72)", 8, "history-empty-panel");
     label(svg, 104, 128, "History is accumulating", "empty-title");
     label(svg, 104, 168, data.warning, "empty-message");
-    label(svg, 104, 210, "Run collect:deribit on an interval to build 24H / 3D / 7D / 30D / 90D heatmaps from real snapshots.", "empty-message");
+    label(svg, 104, 210, `Run ${state.marketClass === "tradfi" ? "collect:akshare" : "collect:deribit"} on an interval to build 24H / 3D / 7D / 30D / 90D heatmaps from real snapshots.`, "empty-message");
     return;
   }
   const chartWidth = width - pad.left - pad.right;
